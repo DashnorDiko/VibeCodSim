@@ -6,6 +6,8 @@ import {
   getUpgradeCost,
   getUpgradeUnlockRequirement,
   type UpgradeType,
+  type BuyMultiplier,
+  getBulkUpgradeInfo,
 } from "../utils/scaling";
 
 export interface Spark {
@@ -123,6 +125,8 @@ interface GameState {
   lastTickTime: number;
   offlineEarnedTokens: number;
   offlineEarnedSeconds: number;
+
+  buyMultiplier: BuyMultiplier;
 }
 
 interface GameActions {
@@ -148,6 +152,7 @@ interface GameActions {
   toggleAutoBuy: (type: string) => void;
   resetSave: () => void;
   exportSave: () => string;
+  setBuyMultiplier: (mult: BuyMultiplier) => void;
 }
 
 type GameStore = GameState & GameActions;
@@ -510,6 +515,7 @@ const getPersistedState = (state: GameState) => {
     achievements: state.achievements,
     lastEventTime: state.lastEventTime,
     autoBuyEnabled: state.autoBuyEnabled,
+    buyMultiplier: state.buyMultiplier,
   };
 };
 
@@ -584,6 +590,8 @@ const defaultState: GameState = {
   lastTickTime: 0,
   offlineEarnedTokens: 0,
   offlineEarnedSeconds: 0,
+
+  buyMultiplier: 1,
 };
 
 const clampNum = (v: unknown, min: number, max: number, fallback: number): number => {
@@ -624,6 +632,7 @@ const validateSave = (raw: Record<string, unknown>): Partial<GameState> => {
     achievements: Array.isArray(raw.achievements) ? raw.achievements.filter((v): v is string => typeof v === "string") : [],
     lastEventTime: clampNum(raw.lastEventTime, 0, MAX_SAFE, 0),
     autoBuyEnabled: (typeof raw.autoBuyEnabled === "object" && raw.autoBuyEnabled !== null) ? raw.autoBuyEnabled as Record<string, boolean> : {},
+    buyMultiplier: [1, 10, 100, "MAX"].includes(raw.buyMultiplier as any) ? (raw.buyMultiplier as BuyMultiplier) : 1,
   };
 };
 
@@ -921,19 +930,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const typed = type as UpgradeType;
     if (!isUpgradeUnlocked(state, typed)) return;
     const level = getUpgradeLevel(state, typed);
-    const tierRequirement = getTierUnlockRequirement(Math.floor(level / 20) + 1);
-    if (state.lifetimeTokens < tierRequirement) return;
     const meta = getMetaEffects(state);
-    const cost = getUpgradeCost(level, {
-      costMultiplier: getUpgradeCostMultiplier(typed),
-      metaDiscount: meta.costDiscount,
-    });
-    if (state.neuralTokens < cost) return;
 
-    const next = { neuralTokens: state.neuralTokens - cost } as Partial<GameState>;
-    if (type === "autoCoder") next.autoCoderLevel = state.autoCoderLevel + 1;
-    if (type === "server") next.serverLevel = state.serverLevel + 1;
-    if (type === "keyboard") next.keyboardLevel = state.keyboardLevel + 1;
+    const bulkInfo = getBulkUpgradeInfo(
+      level,
+      state.buyMultiplier,
+      state.neuralTokens,
+      state.lifetimeTokens,
+      {
+        costMultiplier: getUpgradeCostMultiplier(typed),
+        metaDiscount: meta.costDiscount,
+      }
+    );
+
+    if (!bulkInfo.isAffordable) return;
+    if (bulkInfo.levelsGained === 0) return;
+
+    const next = { neuralTokens: state.neuralTokens - bulkInfo.totalCost } as Partial<GameState>;
+    if (type === "autoCoder") next.autoCoderLevel = state.autoCoderLevel + bulkInfo.levelsGained;
+    if (type === "server") next.serverLevel = state.serverLevel + bulkInfo.levelsGained;
+    if (type === "keyboard") next.keyboardLevel = state.keyboardLevel + bulkInfo.levelsGained;
     set(next);
     void persistSnapshot(get());
   },
@@ -943,20 +959,27 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const typed = type as UpgradeType;
     if (!isUpgradeUnlocked(state, typed)) return;
     const level = getUpgradeLevel(state, typed);
-    const tierRequirement = getTierUnlockRequirement(Math.floor(level / 20) + 1);
-    if (state.lifetimeTokens < tierRequirement) return;
     const meta = getMetaEffects(state);
-    const cost = getUpgradeCost(level, {
-      costMultiplier: getUpgradeCostMultiplier(typed),
-      metaDiscount: meta.costDiscount,
-    });
-    if (state.neuralTokens < cost) return;
 
-    const next = { neuralTokens: state.neuralTokens - cost } as Partial<GameState>;
-    if (type === "aiPair") next.aiPairLevel = state.aiPairLevel + 1;
-    if (type === "gitAutopilot") next.gitAutopilotLevel = state.gitAutopilotLevel + 1;
-    if (type === "ciPipeline") next.ciPipelineLevel = state.ciPipelineLevel + 1;
-    if (type === "observability") next.observabilityLevel = state.observabilityLevel + 1;
+    const bulkInfo = getBulkUpgradeInfo(
+      level,
+      state.buyMultiplier,
+      state.neuralTokens,
+      state.lifetimeTokens,
+      {
+        costMultiplier: getUpgradeCostMultiplier(typed),
+        metaDiscount: meta.costDiscount,
+      }
+    );
+
+    if (!bulkInfo.isAffordable) return;
+    if (bulkInfo.levelsGained === 0) return;
+
+    const next = { neuralTokens: state.neuralTokens - bulkInfo.totalCost } as Partial<GameState>;
+    if (type === "aiPair") next.aiPairLevel = state.aiPairLevel + bulkInfo.levelsGained;
+    if (type === "gitAutopilot") next.gitAutopilotLevel = state.gitAutopilotLevel + bulkInfo.levelsGained;
+    if (type === "ciPipeline") next.ciPipelineLevel = state.ciPipelineLevel + bulkInfo.levelsGained;
+    if (type === "observability") next.observabilityLevel = state.observabilityLevel + bulkInfo.levelsGained;
     set(next);
     void persistSnapshot(get());
   },
@@ -1088,6 +1111,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({
       autoBuyEnabled: { ...state.autoBuyEnabled, [type]: !current },
     });
+    void persistSnapshot(get());
+  },
+
+  setBuyMultiplier: (mult) => {
+    set({ buyMultiplier: mult });
     void persistSnapshot(get());
   },
 

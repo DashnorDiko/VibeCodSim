@@ -5,7 +5,7 @@ import { T } from "../../constants/theme";
 import { getTierUnlockRequirement, getUpgradeCostMultiplier, useGameStore } from "../../store/gameStore";
 import { formatNumber } from "../../utils/formatNumber";
 import type { UpgradeType } from "../../utils/scaling";
-import { getUpgradeCost, getUpgradeTierLabel } from "../../utils/scaling";
+import { getUpgradeCost, getUpgradeTierLabel, getBulkUpgradeInfo } from "../../utils/scaling";
 
 interface UpgradeCardProps {
   type: "autoCoder" | "server" | "keyboard" | "aiPair" | "gitAutopilot" | "cloudBurst" | "ciPipeline" | "observability";
@@ -22,6 +22,7 @@ export const UpgradeCard: React.FC<UpgradeCardProps> = ({ type, title, unlocksAt
   const unlockedMetaNodes = useGameStore((s) => s.unlockedMetaNodes);
   const energyDrinks = useGameStore((s) => s.energyDrinks);
   const cloudBurstActive = useGameStore((s) => s.cloudBurstActive);
+  const buyMultiplier = useGameStore((s) => s.buyMultiplier);
 
   const level = useGameStore((s) => {
     if (type === "autoCoder") return s.autoCoderLevel;
@@ -154,9 +155,19 @@ export const UpgradeCard: React.FC<UpgradeCardProps> = ({ type, title, unlocksAt
   const usesAdvanced = type === "aiPair" || type === "gitAutopilot" || type === "ciPipeline" || type === "observability";
   const costMult = getUpgradeCostMultiplier(type as UpgradeType);
   const metaDiscount = unlockedMetaNodes.includes("couponCompiler") ? 0.12 : 0;
-  const cost = getUpgradeCost(level, { costMultiplier: costMult, metaDiscount });
-  const nextCost = getUpgradeCost(level + 1, { costMultiplier: costMult, metaDiscount });
-  const canAfford = neuralTokens >= cost;
+  
+  const bulkInfo = getBulkUpgradeInfo(
+    level,
+    buyMultiplier,
+    neuralTokens,
+    lifetimeTokens,
+    { costMultiplier: costMult, metaDiscount }
+  );
+
+  const cost = bulkInfo.totalCost;
+  const nextCost = bulkInfo.nextSingleCost;
+  const canAfford = bulkInfo.isAffordable;
+  
   const tierLabel = getUpgradeTierLabel(level);
   const tierReq = getTierUnlockRequirement(Math.floor(level / 20) + 1);
   const tierUnlocked = lifetimeTokens >= tierReq;
@@ -300,7 +311,7 @@ export const UpgradeCard: React.FC<UpgradeCardProps> = ({ type, title, unlocksAt
             letterSpacing: 2, textTransform: "uppercase", textAlign: "center",
             marginBottom: 3,
           }}>
-            {tierUnlocked ? "INSTALL" : "LOCKED"}
+            {tierUnlocked && bulkInfo.levelsGained > 1 ? `INSTALL ${bulkInfo.levelsGained}X` : tierUnlocked ? "INSTALL" : "LOCKED"}
           </Text>
           <Text style={{ fontFamily: T.mono, fontSize: T.font.sm + 1, color: canAfford ? "#fff" : T.text.muted, fontWeight: "700", textAlign: "center" }}>
             {formatNumber(cost)}

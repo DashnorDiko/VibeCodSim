@@ -91,3 +91,67 @@ export const getUpgradeUnlockRequirement = (
   if (type === "observability") return { lifetimeTokens: 1_000_000, rebootCount: 2 };
   return {};
 };
+
+export type BuyMultiplier = 1 | 10 | 100 | "MAX";
+
+export interface BulkPurchaseInfo {
+  totalCost: number;
+  levelsGained: number;
+  isAffordable: boolean;
+  isTierLocked: boolean; // true edhe nqs do kapej tier lock psh te upgrade i 3 nqs po ben 10x
+  nextSingleCost: number;
+}
+
+export const getBulkUpgradeInfo = (
+  currentLevel: number,
+  targetAmount: BuyMultiplier,
+  availableTokens: number,
+  lifetimeTokens: number,
+  options: UpgradeCostOptions = {}
+): BulkPurchaseInfo => {
+  let totalCost = 0;
+  let levelsGained = 0;
+  let simulatedLevel = currentLevel;
+  let isTierLocked = false;
+  
+  const maxIterations = targetAmount === "MAX" ? 10_000 : targetAmount;
+
+  for (let i = 0; i < maxIterations; i++) {
+    const tierReq = getTierUnlockRequirement(Math.floor(simulatedLevel / 20) + 1);
+    if (lifetimeTokens < tierReq) {
+      if (levelsGained === 0) isTierLocked = true;
+      break;
+    }
+
+    const nextCost = getUpgradeCost(simulatedLevel, options);
+    
+    if (targetAmount === "MAX" && totalCost + nextCost > availableTokens) {
+      break;
+    }
+
+    totalCost += nextCost;
+    simulatedLevel++;
+    levelsGained++;
+  }
+
+  if (levelsGained === 0) {
+    totalCost = getUpgradeCost(currentLevel, options);
+  }
+
+  let isAffordable = false;
+  if (targetAmount === "MAX") {
+    isAffordable = levelsGained > 0;
+  } else {
+    isAffordable = levelsGained > 0 && availableTokens >= totalCost;
+  }
+
+  const nextSingleCost = getUpgradeCost(currentLevel + levelsGained, options);
+
+  return {
+    totalCost,
+    levelsGained,
+    isAffordable,
+    isTierLocked,
+    nextSingleCost,
+  };
+};
