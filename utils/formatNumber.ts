@@ -2,12 +2,12 @@
  * Formats a number into a human-readable abbreviated string with rounded values.
  *
  * Examples:
- *   3.7       → "4"
+ *   3.7       → "3.70"
  *   999       → "999"
- *   1500      → "1.5K"
- *   1_200_000 → "1.2M"
- *   1e9       → "1B"
- *   1e12      → "1T"
+ *   1500      → "1.50K"
+ *   1_200_000 → "1.20M"
+ *   1e9       → "1.00B"
+ *   1e12      → "1.00T"
  */
 const SUFFIXES: [number, string][] = [
   [1e15, "Qa"],
@@ -22,13 +22,21 @@ export const formatNumber = (n: number): string => {
 
   const abs = Math.abs(n);
 
+  if (abs < 10) {
+    return n.toFixed(2);
+  }
+
+  if (abs < 1000) {
+    return Number.isInteger(n) ? n.toFixed(0) : n.toFixed(1);
+  }
+
   for (const [threshold, suffix] of SUFFIXES) {
     if (abs >= threshold) {
       const val = n / threshold;
-      const s = val.toFixed(1);
-      return (s.endsWith(".0") ? Math.round(val).toString() : s) + suffix;
+      return `${val.toFixed(2)}${suffix}`;
     }
   }
 
-  return Math.round(n).toString();
+  // Fallback (should be unreachable due to the 1e3 suffix threshold).
+  return n.toFixed(0);
 };

@@ -733,7 +733,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const earnedTokens = income.passivePerSecond * deltaSeconds;
 
     let newStrain = gameMechanics.decayStrain(state.strainLevel, deltaSeconds);
-    let newIsBurnedOut = state.isBurnedOut;
+    // Burnout is derived from current strain; don't let it get stuck.
+    let newIsBurnedOut = gameMechanics.isBurnedOut(newStrain);
     let newSparks = state.activeSparks.filter((spark) => spark.expiresAt > timestamp);
 
     if (newIsBurnedOut && newStrain === 0) {
@@ -817,7 +818,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       locPerSecond: income.passivePerSecond,
       tapPower: income.tapPower,
       incomeMultiplier: income.incomeMultiplier,
-      strainLevel: newStrain * eventStrainMult,
+      // Event strain effects should apply to *strain gain* (e.g. taps), not inflate stored strain and cooldown time.
+      strainLevel: Math.min(gameMechanics.maxStrain, Math.max(0, newStrain)),
       isBurnedOut: newIsBurnedOut,
       activeSparks: newSparks,
       activeBonusWord: newBonusWord,
@@ -879,7 +881,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const income = buildIncomeSnapshot(state, burstStillActive);
     const aiReduction = Math.max(0.2, 1 - state.aiPairLevel * 0.15);
     const strainMultiplier = aiReduction * meta.strainMultiplier;
-    const newStrain = gameMechanics.getNewStrain(state.strainLevel, strainMultiplier);
+    const eventStrainMult = state.activeEvent?.id === "bug_swarm" ? 2 : 1;
+    const newStrain = gameMechanics.getNewStrain(state.strainLevel, strainMultiplier * eventStrainMult);
 
     const timeSinceLastTap = now - state.lastTapTime;
     const newCombo = timeSinceLastTap < 1200 ? state.comboCount + 1 : 1;

@@ -1,5 +1,5 @@
 const MAX_STRAIN = 100;
-const STRAIN_DECAY_RATE = 2.5; // strain lost per second
+const STRAIN_DECAY_RATE = 4; // strain lost per second
 const STRAIN_PER_KEYSTROKE = 1.2;
 const BASE_SPARK_CHANCE_PER_SECOND = 0.0045;
 
