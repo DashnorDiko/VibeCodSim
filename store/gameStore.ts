@@ -222,7 +222,7 @@ const META_NODE_DEFINITIONS: MetaNodeDefinition[] = [
     title: "Burst Daemon",
     description: "Cloud Burst lasts 12s longer",
     cost: 3,
-    requires: ["threadOptimizer", "couponCompiler"],
+    requires: ["couponCompiler"],
   },
   {
     id: "architectMind",
@@ -230,6 +230,13 @@ const META_NODE_DEFINITIONS: MetaNodeDefinition[] = [
     description: "15% global income boost",
     cost: 5,
     requires: ["sparkMagnet", "burstDaemon"],
+  },
+  {
+    id: "test",
+    title: "ti qr tailwindit",
+    description: "test",
+    cost: 69,
+    requires: ["architectMind"],
   },
 ];
 
