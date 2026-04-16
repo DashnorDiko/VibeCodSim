@@ -1,3 +1,5 @@
+import { debugLog } from "./debug";
+
 const BASE_COST = 10;
 const BASE_SCALING_FACTOR = 1.15;
 const SOFTCAP_LEVEL = 30;
@@ -30,10 +32,20 @@ const getBaseTierMultiplier = (tier: number): number => {
  * Returns the cost of the next upgrade level.
  * Includes tier pressure and late-level softcaps to prevent runaway scaling.
  */
+const upgradeCostCache = new Map<string, number>();
+const UPGRADE_COST_CACHE_MAX = 8000;
+
+const upgradeCostCacheKey = (level: number, options: UpgradeCostOptions): string =>
+  `${Math.max(0, Math.floor(level))}|${options.costMultiplier ?? 1}|${options.metaDiscount ?? 0}`;
+
 export const getUpgradeCost = (
   level: number,
   options: UpgradeCostOptions = {}
 ): number => {
+  const key = upgradeCostCacheKey(level, options);
+  const hit = upgradeCostCache.get(key);
+  if (hit !== undefined) return hit;
+
   const { costMultiplier = 1, metaDiscount = 0 } = options;
   const safeLevel = Math.max(0, Math.floor(level));
   const tier = getUpgradeTier(safeLevel);
@@ -63,7 +75,12 @@ export const getUpgradeCost = (
   }
 
   const discounted = baseCost * costMultiplier * (1 - Math.min(0.5, Math.max(0, metaDiscount)));
-  return Math.max(1, Math.floor(discounted));
+  const out = Math.max(1, Math.floor(discounted));
+  if (upgradeCostCache.size >= UPGRADE_COST_CACHE_MAX) {
+    upgradeCostCache.clear();
+  }
+  upgradeCostCache.set(key, out);
+  return out;
 };
 
 export const getUpgradeTier = (level: number): number => {
@@ -109,6 +126,11 @@ export const getBulkUpgradeInfo = (
   lifetimeLoc: number,
   options: UpgradeCostOptions = {}
 ): BulkPurchaseInfo => {
+  const t0 =
+    typeof __DEV__ !== "undefined" && __DEV__ && targetAmount === "MAX"
+      ? performance.now()
+      : 0;
+
   let totalCost = 0;
   let levelsGained = 0;
   let simulatedLevel = currentLevel;
@@ -146,6 +168,14 @@ export const getBulkUpgradeInfo = (
   }
 
   const nextSingleCost = getUpgradeCost(currentLevel + levelsGained, options);
+
+  if (t0 && targetAmount === "MAX") {
+    debugLog("bulkBuyMaxMs", {
+      ms: Number((performance.now() - t0).toFixed(3)),
+      levelsGained,
+      currentLevel,
+    });
+  }
 
   return {
     totalCost,

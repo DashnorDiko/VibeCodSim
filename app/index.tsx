@@ -42,6 +42,7 @@ import { BuyMultiplierToggle } from "../components/ui/BuyMultiplierToggle";
 import { T } from "../constants/theme";
 import { ACHIEVEMENT_DEFINITIONS, getTokenTechCost, useGameStore } from "../store/gameStore";
 import { formatNumber } from "../utils/formatNumber";
+import { exportSaveShareNative, pickSaveFileText } from "../utils/saveFile";
 
 type MobileTab = "NODE" | "PACKAGES" | "ADVANCED" | "BOOST" | "PROGRESS";
 type DesktopSubTab = "packages" | "advanced" | "boost" | "progress";
@@ -161,7 +162,6 @@ const BoostContent: React.FC = () => {
   const prestigeLevel = useGameStore((s) => s.rebootPrestigeLevel);
   const rebootCount = useGameStore((s) => s.rebootCount);
   const purchaseTokenUpgrade = useGameStore((s) => s.purchaseTokenUpgrade);
-  const useScientificNotation = useGameStore((s) => s.useScientificNotation);
   const cost = getTokenTechCost(techLevel);
   const nextCost = getTokenTechCost(techLevel + 1);
   const canAfford = tokens >= cost;
@@ -481,24 +481,36 @@ const SettingsModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
 
   const [exportString, setExportString] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
+  const [saveIoStatus, setSaveIoStatus] = useState<string | null>(null);
   const [resetInput, setResetInput] = useState("");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const handleExport = () => {
     const str = exportSave();
     setExportString(str);
+    setSaveIoStatus(str ? "Copied save string to clipboard." : "Export failed.");
     try { Clipboard.setString(str); } catch { }
   };
 
-  const handleDownloadExport = () => {
+  const handleDownloadExport = async () => {
     const str = exportSave();
     setExportString(str);
     setImportError(null);
+    setSaveIoStatus(null);
 
-    if (!str) return;
+    if (!str) {
+      setSaveIoStatus("Export failed.");
+      return;
+    }
 
     if (Platform.OS !== "web") {
-      try { Clipboard.setString(str); } catch { }
+      const res = await exportSaveShareNative(str);
+      if (res.ok) {
+        setSaveIoStatus("Exported — share sheet opened (cache copy for sharing).");
+      } else {
+        setSaveIoStatus(res.error);
+        try { Clipboard.setString(str); } catch { }
+      }
       return;
     }
 
@@ -512,14 +524,40 @@ const SettingsModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setSaveIoStatus("Exported to vibecodesim-save.txt (Downloads).");
     } catch {
       try { Clipboard.setString(str); } catch { }
+      setSaveIoStatus("Download failed — copied to clipboard instead.");
     }
   };
 
   const handleImportPickFile = () => {
-    if (Platform.OS !== "web") return;
     setImportError(null);
+    setSaveIoStatus(null);
+
+    if (Platform.OS !== "web") {
+      void (async () => {
+        const picked = await pickSaveFileText();
+        if (!picked.ok) {
+          if (picked.error !== "Cancelled.") {
+            setImportError(picked.error);
+          }
+          return;
+        }
+        const res = importSave(picked.text.trim());
+        if (res.ok) {
+          setExportString("");
+          setImportError(null);
+          setSaveIoStatus("Imported successfully.");
+          setShowResetConfirm(false);
+          setResetInput("");
+          onClose();
+        } else {
+          setImportError(res.error);
+        }
+      })();
+      return;
+    }
 
     try {
       const input = document.createElement("input");
@@ -534,6 +572,7 @@ const SettingsModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
           if (res.ok) {
             setExportString("");
             setImportError(null);
+            setSaveIoStatus("Imported successfully.");
             setShowResetConfirm(false);
             setResetInput("");
             onClose();
@@ -564,6 +603,7 @@ const SettingsModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
     setResetInput("");
     setExportString("");
     setImportError(null);
+    setSaveIoStatus(null);
     onClose();
   };
 
@@ -592,7 +632,7 @@ const SettingsModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
             <View style={{ height: 1, backgroundColor: T.border.subtle, marginBottom: T.space.lg }} />
 
             <Pressable
-              onPress={Platform.OS === "web" ? handleDownloadExport : handleExport}
+              onPress={() => void handleDownloadExport()}
               style={({ pressed }) => ({
                 paddingVertical: T.space.md, paddingHorizontal: T.space.lg,
                 borderRadius: T.radius.sm, backgroundColor: pressed ? "#1a3a5a" : "#1a2a3a",
@@ -600,9 +640,26 @@ const SettingsModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
               })}
             >
               <Text style={{ color: T.accent.blueAlt, fontFamily: T.mono, fontSize: T.font.sm, textAlign: "center", fontWeight: "600" }}>
-                {Platform.OS === "web" ? "Export Save (Download .txt)" : "Export Save (Copy to Clipboard)"}
+                {Platform.OS === "web"
+                  ? "Export Save (Download .txt)"
+                  : "Export Save (Share .txt)"}
               </Text>
             </Pressable>
+
+            {Platform.OS !== "web" ? (
+              <Pressable
+                onPress={handleExport}
+                style={({ pressed }) => ({
+                  paddingVertical: T.space.md, paddingHorizontal: T.space.lg,
+                  borderRadius: T.radius.sm, backgroundColor: pressed ? "#152030" : "#121a24",
+                  borderWidth: 1, borderColor: "#2e405f", marginBottom: T.space.sm,
+                })}
+              >
+                <Text style={{ color: T.text.muted, fontFamily: T.mono, fontSize: T.font.sm, textAlign: "center", fontWeight: "600" }}>
+                  Copy save string (clipboard)
+                </Text>
+              </Pressable>
+            ) : null}
 
             {exportString ? (
               <View style={{ marginBottom: T.space.sm }}>
@@ -622,28 +679,32 @@ const SettingsModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
               </View>
             ) : null}
 
-            {Platform.OS === "web" ? (
-              <View style={{ marginBottom: T.space.sm }}>
-                <Pressable
-                  onPress={handleImportPickFile}
-                  style={({ pressed }) => ({
-                    paddingVertical: T.space.md, paddingHorizontal: T.space.lg,
-                    borderRadius: T.radius.sm, backgroundColor: pressed ? "#2a2a1a" : "#1f1f12",
-                    borderWidth: 1, borderColor: "#5a5a2e",
-                    marginBottom: importError ? T.space.xs : 0,
-                  })}
-                >
-                  <Text style={{ color: T.accent.yellow, fontFamily: T.mono, fontSize: T.font.sm, textAlign: "center", fontWeight: "600" }}>
-                    Import Save (Pick .txt)
-                  </Text>
-                </Pressable>
-                {importError ? (
-                  <Text style={{ color: T.accent.red, fontSize: 10, fontFamily: T.mono, textAlign: "center" }}>
-                    {importError}
-                  </Text>
-                ) : null}
-              </View>
+            {saveIoStatus ? (
+              <Text style={{ color: T.accent.green, fontSize: 10, fontFamily: T.mono, textAlign: "center", marginBottom: T.space.sm }}>
+                {saveIoStatus}
+              </Text>
             ) : null}
+
+            <View style={{ marginBottom: T.space.sm }}>
+              <Pressable
+                onPress={handleImportPickFile}
+                style={({ pressed }) => ({
+                  paddingVertical: T.space.md, paddingHorizontal: T.space.lg,
+                  borderRadius: T.radius.sm, backgroundColor: pressed ? "#2a2a1a" : "#1f1f12",
+                  borderWidth: 1, borderColor: "#5a5a2e",
+                  marginBottom: importError ? T.space.xs : 0,
+                })}
+              >
+                <Text style={{ color: T.accent.yellow, fontFamily: T.mono, fontSize: T.font.sm, textAlign: "center", fontWeight: "600" }}>
+                  {Platform.OS === "web" ? "Import Save (Pick .txt)" : "Import Save (Pick file)"}
+                </Text>
+              </Pressable>
+              {importError ? (
+                <Text style={{ color: T.accent.red, fontSize: 10, fontFamily: T.mono, textAlign: "center" }}>
+                  {importError}
+                </Text>
+              ) : null}
+            </View>
 
             <View style={{ height: 1, backgroundColor: T.border.subtle, marginVertical: T.space.md }} />
 
@@ -745,7 +806,7 @@ const ProgressContent: React.FC = () => {
           Total LoC: {formatNumber(lifetimeLoc)}
         </Text>
         <Text style={{ color: T.text.primary, fontSize: T.font.base, marginTop: 2, fontFamily: T.mono }}>
-          Architecture Points: {architecturePoints}
+          Architecture Points: {formatNumber(architecturePoints)}
         </Text>
       </View>
       <StatsPanel />

@@ -58,7 +58,7 @@ export const TokenDisplay: React.FC = () => {
               </Text>
             </View>
             <Text style={{ color: T.text.muted, fontSize: T.font.xs, fontFamily: T.mono }}>
-              x{incomeMultiplier.toFixed(1)}
+              x{formatNumber(incomeMultiplier)}
             </Text>
             {comboCount > 0 && (
               <View style={{

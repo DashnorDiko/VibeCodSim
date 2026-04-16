@@ -10,126 +10,35 @@ import {
   getBulkUpgradeInfo,
 } from "../utils/scaling";
 import { formatNumber } from "../utils/formatNumber";
+import { debugLog } from "../utils/debug";
+import type { GameNotification, GameState, MetaNodeDefinition, MilestoneDefinition } from "./gameTypes";
+import { REBOOT_THRESHOLD, SAVE_THROTTLE_MS } from "./gameConstants";
+import {
+  SAVE_VERSION,
+  STORAGE_KEY_LAST_ACTIVE,
+  STORAGE_KEY_SAVE,
+  STORAGE_KEY_SAVE_LEGACY_V2,
+  STORAGE_KEY_SAVE_PREV,
+  deserializeSave,
+  serializePersistedSave,
+} from "./save";
+import {
+  buildIncomeSnapshot,
+  cloudBurstDurationMs,
+  computeOfflinePassiveEarn,
+  deriveEffectiveCloudBurstActive,
+  deriveRuntimeFromPersisted,
+  getMetaEffects,
+} from "./economy";
 
-export interface Spark {
-  id: string;
-  x: number;
-  y: number;
-  value: number;
-  expiresAt: number;
-}
-
-export interface MetaNodeDefinition {
-  id: string;
-  title: string;
-  description: string;
-  cost: number;
-  requires: string[];
-}
-
-export interface MilestoneDefinition {
-  id: string;
-  title: string;
-  description: string;
-  lifetimeLoc?: number;
-  rebootCount?: number;
-  rewardLoc?: number;
-  rewardTokens?: number;
-  rewardArchitecturePoints?: number;
-}
-
-export interface GameNotification {
-  id: string;
-  title: string;
-  message: string;
-}
-
-interface MetaEffects {
-  tapMultiplier: number;
-  passiveMultiplier: number;
-  costDiscount: number;
-  sparkChanceMultiplier: number;
-  sparkRewardMultiplier: number;
-  strainMultiplier: number;
-  cloudBurstMultiplierBonus: number;
-}
-
-export interface ActiveEvent {
-  id: string;
-  title: string;
-  description: string;
-  endsAt: number;
-  duration: number;
-}
-
-interface GameState {
-  saveVersion: number;
-  hasHydrated: boolean;
-  hydrationStarted: boolean;
-
-  locCount: number;
-  lifetimeLoc: number;
-  locPerSecond: number;
-  tapPower: number;
-  incomeMultiplier: number;
-
-  autoCoderLevel: number;
-  serverLevel: number;
-  keyboardLevel: number;
-  aiPairLevel: number;
-  gitAutopilotLevel: number;
-  ciPipelineLevel: number;
-  observabilityLevel: number;
-
-  cloudBurstActive: boolean;
-  cloudBurstCooldown: number;
-  cloudBurstEndsAt: number;
-
-  strainLevel: number;
-  isBurnedOut: boolean;
-  comboCount: number;
-  lastTapTime: number;
-  activeSparks: Spark[];
-
-  tokens: number;
-  tokenTechLevel: number;
-  rebootPrestigeLevel: number;
-  rebootCount: number;
-
-  architecturePoints: number;
-  unlockedMetaNodes: string[];
-  milestoneClaims: string[];
-
-  activeBonusWord: string | null;
-  bonusWordExpiresAt: number | null;
-  bonusWordPosition: { x: number; y: number } | null;
-
-  activeNotification: GameNotification | null;
-
-  // Stats
-  totalTaps: number;
-  totalSparksCollected: number;
-  totalBonusWordsClaimed: number;
-  highestCombo: number;
-  totalTimePlayed: number;
-
-  // Achievements
-  achievements: string[];
-
-  // Random events
-  activeEvent: ActiveEvent | null;
-  lastEventTime: number;
-
-  // Auto-buy
-  autoBuyEnabled: Record<string, boolean>;
-
-  lastTickTime: number;
-  offlineEarnedLoc: number;
-  offlineEarnedSeconds: number;
-
-  buyMultiplier: BuyMultiplier;
-  useScientificNotation: boolean;
-}
+export type {
+  ActiveEvent,
+  GameNotification,
+  GameState,
+  MetaNodeDefinition,
+  MilestoneDefinition,
+  Spark,
+} from "./gameTypes";
 
 interface GameActions {
   tapProgrammer: () => void;
@@ -161,10 +70,6 @@ interface GameActions {
 
 type GameStore = GameState & GameActions;
 
-const SAVE_VERSION = 2;
-const STORAGE_KEY_LAST_ACTIVE = "vibecodesim_last_active";
-const STORAGE_KEY_SAVE = "vibecodesim_save_v2";
-
 const BONUS_WORDS = [
   "function",
   "await",
@@ -184,11 +89,6 @@ const BONUS_WORDS = [
 ];
 
 const BONUS_WORD_DURATION = 5000;
-const MAX_OFFLINE_SECONDS = 4 * 60 * 60;
-const CLOUD_BURST_DURATION = 30;
-const CLOUD_BURST_COOLDOWN = 45;
-const REBOOT_THRESHOLD = 1_000_000;
-const SAVE_THROTTLE_MS = 1200;
 let lastPersistedAt = 0;
 
 const META_NODE_DEFINITIONS: MetaNodeDefinition[] = [
@@ -369,12 +269,6 @@ const EVENT_DEFINITIONS = [
 const EVENT_INTERVAL_MIN = 120;
 const EVENT_INTERVAL_MAX = 300;
 
-const getPrestigeMultiplier = (tokenTechLevel: number, rebootPrestigeLevel: number): number => {
-  const shopBonus = tokenTechLevel * 0.2 * (1 / (1 + tokenTechLevel * 0.05));
-  const rebootBonus = rebootPrestigeLevel * 0.15 * (1 / (1 + rebootPrestigeLevel * 0.03));
-  return 1 + shopBonus + rebootBonus;
-};
-
 const getTokenTechCost = (level: number): number => {
   return Math.floor(5 * Math.pow(2.5, level));
 };
@@ -384,19 +278,6 @@ const makeNotification = (title: string, message: string): GameNotification => (
   title,
   message,
 });
-
-const getMetaEffects = (state: Pick<GameState, "unlockedMetaNodes">): MetaEffects => {
-  const has = (id: string) => state.unlockedMetaNodes.includes(id);
-  return {
-    tapMultiplier: has("architectMind") ? 1.15 : 1,
-    passiveMultiplier: (has("threadOptimizer") ? 1.18 : 1) * (has("architectMind") ? 1.15 : 1),
-    costDiscount: has("couponCompiler") ? 0.12 : 0,
-    sparkChanceMultiplier: has("sparkMagnet") ? 1.25 : 1,
-    sparkRewardMultiplier: has("sparkMagnet") ? 1.3 : 1,
-    strainMultiplier: has("steadyHands") ? 0.9 : 1,
-    cloudBurstMultiplierBonus: has("burstDaemon") ? 1 : 0,
-  };
-};
 
 const getUpgradeLevel = (state: GameState, type: UpgradeType): number => {
   if (type === "autoCoder") return state.autoCoderLevel;
@@ -436,46 +317,6 @@ const isUpgradeUnlocked = (state: GameState, type: UpgradeType): boolean => {
   return true;
 };
 
-const buildIncomeSnapshot = (
-  state: GameState,
-  includeCloudBurst: boolean
-): { passivePerSecond: number; tapPower: number; incomeMultiplier: number } => {
-  const meta = getMetaEffects(state);
-  const prestigeMultiplier = getPrestigeMultiplier(state.tokenTechLevel, state.rebootPrestigeLevel);
-  const gitBonus = 1 + state.gitAutopilotLevel * 0.1;
-  const ciBonus = 1 + state.ciPipelineLevel * 0.2;
-  const obsBonus = 1 + state.observabilityLevel * 0.35;
-  const cloudMultiplier = includeCloudBurst ? (2 + meta.cloudBurstMultiplierBonus) : 1;
-
-  const passivePerSecond =
-    (state.serverLevel * 0.5 + state.autoCoderLevel * 0.3 + state.keyboardLevel * 0.18) *
-    prestigeMultiplier *
-    gitBonus *
-    ciBonus *
-    obsBonus *
-    meta.passiveMultiplier *
-    cloudMultiplier;
-
-  const tapPower =
-    (1 + state.autoCoderLevel * 0.5 + state.keyboardLevel * 0.08) *
-    prestigeMultiplier *
-    obsBonus *
-    meta.tapMultiplier *
-    cloudMultiplier;
-
-  return {
-    passivePerSecond,
-    tapPower,
-    incomeMultiplier:
-      prestigeMultiplier *
-      gitBonus *
-      ciBonus *
-      obsBonus *
-      meta.passiveMultiplier *
-      cloudMultiplier,
-  };
-};
-
 const isMilestoneComplete = (state: GameState, milestone: MilestoneDefinition): boolean => {
   if (milestone.lifetimeLoc && state.lifetimeLoc < milestone.lifetimeLoc) {
     return false;
@@ -486,52 +327,25 @@ const isMilestoneComplete = (state: GameState, milestone: MilestoneDefinition): 
   return true;
 };
 
-const getPersistedState = (state: GameState) => {
-  return {
-    saveVersion: SAVE_VERSION,
-    locCount: state.locCount,
-    lifetimeLoc: state.lifetimeLoc,
-    autoCoderLevel: state.autoCoderLevel,
-    serverLevel: state.serverLevel,
-    keyboardLevel: state.keyboardLevel,
-    aiPairLevel: state.aiPairLevel,
-    gitAutopilotLevel: state.gitAutopilotLevel,
-    ciPipelineLevel: state.ciPipelineLevel,
-    observabilityLevel: state.observabilityLevel,
-    cloudBurstCooldown: state.cloudBurstCooldown,
-    cloudBurstEndsAt: state.cloudBurstEndsAt,
-    strainLevel: state.strainLevel,
-    isBurnedOut: state.isBurnedOut,
-    comboCount: state.comboCount,
-    lastTapTime: state.lastTapTime,
-    tokens: state.tokens,
-    tokenTechLevel: state.tokenTechLevel,
-    rebootPrestigeLevel: state.rebootPrestigeLevel,
-    rebootCount: state.rebootCount,
-    architecturePoints: state.architecturePoints,
-    unlockedMetaNodes: state.unlockedMetaNodes,
-    milestoneClaims: state.milestoneClaims,
-    totalTaps: state.totalTaps,
-    totalSparksCollected: state.totalSparksCollected,
-    totalBonusWordsClaimed: state.totalBonusWordsClaimed,
-    highestCombo: state.highestCombo,
-    totalTimePlayed: state.totalTimePlayed,
-    achievements: state.achievements,
-    lastEventTime: state.lastEventTime,
-    autoBuyEnabled: state.autoBuyEnabled,
-    buyMultiplier: state.buyMultiplier,
-    useScientificNotation: state.useScientificNotation,
-  };
-};
-
 const persistSnapshot = async (state: GameState) => {
   const now = Date.now();
   if (now - lastPersistedAt < SAVE_THROTTLE_MS) return;
-  const saveState = getPersistedState(state);
-  await AsyncStorage.multiSet([
-    [STORAGE_KEY_SAVE, JSON.stringify(saveState)],
+  const saveState = serializePersistedSave(state);
+  const encoded = JSON.stringify(saveState);
+  let prev: string | null = null;
+  try {
+    prev = await AsyncStorage.getItem(STORAGE_KEY_SAVE);
+  } catch {
+    prev = null;
+  }
+  const entries: [string, string][] = [
+    [STORAGE_KEY_SAVE, encoded],
     [STORAGE_KEY_LAST_ACTIVE, now.toString()],
-  ]);
+  ];
+  if (prev) {
+    entries.push([STORAGE_KEY_SAVE_PREV, prev]);
+  }
+  await AsyncStorage.multiSet(entries);
   lastPersistedAt = now;
 };
 
@@ -600,47 +414,19 @@ const defaultState: GameState = {
   useScientificNotation: false,
 };
 
-const clampNum = (v: unknown, min: number, max: number, fallback: number): number => {
-  if (typeof v !== "number" || !isFinite(v)) return fallback;
-  return Math.max(min, Math.min(max, v));
-};
-
-const validateSave = (raw: Record<string, unknown>): Partial<GameState> => {
-  const MAX_SAFE = 1e18;
-  return {
-    locCount: clampNum(raw.locCount ?? raw.neuralTokens, 0, MAX_SAFE, 0),
-    lifetimeLoc: clampNum(raw.lifetimeLoc ?? raw.lifetimeTokens, 0, MAX_SAFE, 0),
-    autoCoderLevel: clampNum(raw.autoCoderLevel, 0, 999, 0),
-    serverLevel: clampNum(raw.serverLevel, 0, 999, 0),
-    keyboardLevel: clampNum(raw.keyboardLevel, 0, 999, 0),
-    aiPairLevel: clampNum(raw.aiPairLevel, 0, 999, 0),
-    gitAutopilotLevel: clampNum(raw.gitAutopilotLevel, 0, 999, 0),
-    ciPipelineLevel: clampNum(raw.ciPipelineLevel, 0, 999, 0),
-    observabilityLevel: clampNum(raw.observabilityLevel, 0, 999, 0),
-    cloudBurstCooldown: clampNum(raw.cloudBurstCooldown, 0, MAX_SAFE, 0),
-    cloudBurstEndsAt: clampNum(raw.cloudBurstEndsAt, 0, MAX_SAFE, 0),
-    strainLevel: clampNum(raw.strainLevel, 0, 100, 0),
-    isBurnedOut: typeof raw.isBurnedOut === "boolean" ? raw.isBurnedOut : false,
-    tokens: clampNum(raw.tokens ?? raw.energyDrinks, 0, MAX_SAFE, 0),
-    tokenTechLevel: clampNum(raw.tokenTechLevel ?? raw.energyTechLevel, 0, 20, 0),
-    rebootPrestigeLevel: clampNum(raw.rebootPrestigeLevel, 0, 999, 0),
-    rebootCount: clampNum(raw.rebootCount, 0, 999, 0),
-    architecturePoints: clampNum(raw.architecturePoints, 0, MAX_SAFE, 0),
-    unlockedMetaNodes: Array.isArray(raw.unlockedMetaNodes) ? raw.unlockedMetaNodes.filter((v): v is string => typeof v === "string") : [],
-    milestoneClaims: Array.isArray(raw.milestoneClaims) ? raw.milestoneClaims.filter((v): v is string => typeof v === "string") : [],
-    comboCount: clampNum(raw.comboCount, 0, 9999, 0),
-    lastTapTime: clampNum(raw.lastTapTime, 0, MAX_SAFE, 0),
-    totalTaps: clampNum(raw.totalTaps, 0, MAX_SAFE, 0),
-    totalSparksCollected: clampNum(raw.totalSparksCollected, 0, MAX_SAFE, 0),
-    totalBonusWordsClaimed: clampNum(raw.totalBonusWordsClaimed, 0, MAX_SAFE, 0),
-    highestCombo: clampNum(raw.highestCombo, 0, 9999, 0),
-    totalTimePlayed: clampNum(raw.totalTimePlayed, 0, MAX_SAFE, 0),
-    achievements: Array.isArray(raw.achievements) ? raw.achievements.filter((v): v is string => typeof v === "string") : [],
-    lastEventTime: clampNum(raw.lastEventTime, 0, MAX_SAFE, 0),
-    autoBuyEnabled: (typeof raw.autoBuyEnabled === "object" && raw.autoBuyEnabled !== null) ? raw.autoBuyEnabled as Record<string, boolean> : {},
-    buyMultiplier: [1, 10, 100, "MAX"].includes(raw.buyMultiplier as any) ? (raw.buyMultiplier as BuyMultiplier) : 1,
-    useScientificNotation: typeof raw.useScientificNotation === "boolean" ? raw.useScientificNotation : false,
-  };
+const tryParseSaveRecord = (
+  json: string | null
+): Record<string, unknown> | null => {
+  if (!json) return null;
+  try {
+    const raw = JSON.parse(json) as unknown;
+    if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+      return raw as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 };
 
 const bootHydration = async (
@@ -648,51 +434,120 @@ const bootHydration = async (
   set: (partial: Partial<GameState>) => void,
   get: () => GameStore
 ) => {
-  try {
-    const [[, saveRaw], [, lastActiveRaw]] = await AsyncStorage.multiGet([
-      STORAGE_KEY_SAVE,
-      STORAGE_KEY_LAST_ACTIVE,
-    ]);
+  const t0 = typeof __DEV__ !== "undefined" && __DEV__ ? performance.now() : 0;
+  debugLog("hydrationStart", { now });
 
-    if (saveRaw) {
-      const raw = JSON.parse(saveRaw) as Record<string, unknown>;
-      set(validateSave(raw));
+  try {
+    const [[, saveRaw], [, prevRaw], [, lastActiveRaw], [, legacyRaw]] =
+      await AsyncStorage.multiGet([
+        STORAGE_KEY_SAVE,
+        STORAGE_KEY_SAVE_PREV,
+        STORAGE_KEY_LAST_ACTIVE,
+        STORAGE_KEY_SAVE_LEGACY_V2,
+      ]);
+
+    const loadFields = (json: string | null): Partial<GameState> | null => {
+      const raw = tryParseSaveRecord(json);
+      if (!raw) return null;
+      const des = deserializeSave(raw);
+      return des.ok ? des.fields : null;
+    };
+
+    const primaryFields = loadFields(saveRaw);
+    let loadedFields: Partial<GameState> | null = primaryFields;
+    let loadedFromPrev = false;
+    let loadedFromLegacy = false;
+    if (!loadedFields && prevRaw) {
+      loadedFields = loadFields(prevRaw);
+      if (loadedFields) loadedFromPrev = true;
+    }
+    if (!loadedFields && legacyRaw) {
+      loadedFields = loadFields(legacyRaw);
+      if (loadedFields) loadedFromLegacy = true;
+    }
+
+    if (loadedFields) {
+      set(loadedFields);
+    }
+
+    const primaryLoadFailed = saveRaw != null && primaryFields === null;
+    if (primaryLoadFailed && loadedFromPrev) {
+      set({
+        activeNotification: makeNotification(
+          "Save recovered",
+          "Primary save was unreadable — loaded rolling backup."
+        ),
+      });
+    } else if (
+      !loadedFields &&
+      (saveRaw != null || prevRaw != null || legacyRaw != null)
+    ) {
+      set({
+        activeNotification: makeNotification(
+          "Save issue",
+          "Save data was unreadable — starting fresh."
+        ),
+      });
     }
 
     const liveState = get();
-    const lastActive = lastActiveRaw ? parseInt(lastActiveRaw, 10) : 0;
-    const gapSeconds = lastActive
-      ? Math.min(MAX_OFFLINE_SECONDS, (Date.now() - lastActive) / 1000)
-      : 0;
+    const lastActiveMs = lastActiveRaw ? parseInt(lastActiveRaw, 10) : Date.now();
+    const nowMs = Date.now();
 
-    const effectiveBurstActive = liveState.cloudBurstActive;
-    const snapshot = buildIncomeSnapshot(
-      { ...liveState, cloudBurstActive: effectiveBurstActive },
-      effectiveBurstActive
-    );
-    const offlineEarned =
-      gapSeconds > 5 ? snapshot.passivePerSecond * gapSeconds : 0;
+    const offline = computeOfflinePassiveEarn(liveState, lastActiveMs, nowMs);
+    const withOffline: GameState = {
+      ...liveState,
+      locCount: liveState.locCount + offline.locEarned,
+      lifetimeLoc: liveState.lifetimeLoc + offline.locEarned,
+      tokens: offline.tokensAfter,
+      offlineEarnedLoc: offline.locEarned,
+      offlineEarnedSeconds: offline.gapSeconds,
+    };
+
+    const runtime = deriveRuntimeFromPersisted(withOffline, nowMs);
+
+    debugLog("hydrationDerivedBurst", {
+      cloudBurstActive: runtime.cloudBurstActive,
+      endsAt: withOffline.cloudBurstEndsAt,
+    });
 
     set({
-      locCount: liveState.locCount + offlineEarned,
-      lifetimeLoc: liveState.lifetimeLoc + offlineEarned,
-      offlineEarnedLoc: offlineEarned,
-      offlineEarnedSeconds: gapSeconds,
-      locPerSecond: snapshot.passivePerSecond,
-      tapPower: snapshot.tapPower,
-      incomeMultiplier: snapshot.incomeMultiplier,
-      cloudBurstActive: effectiveBurstActive,
+      ...withOffline,
+      locPerSecond: runtime.locPerSecond,
+      tapPower: runtime.tapPower,
+      incomeMultiplier: runtime.incomeMultiplier,
+      cloudBurstActive: runtime.cloudBurstActive,
+      cloudBurstEndsAt: runtime.cloudBurstActive
+        ? withOffline.cloudBurstEndsAt
+        : 0,
       hasHydrated: true,
       hydrationStarted: false,
       lastTickTime: now,
     });
 
+    if (loadedFromLegacy) {
+      await AsyncStorage.removeItem(STORAGE_KEY_SAVE_LEGACY_V2);
+    }
+
     await persistSnapshot(get());
+
+    if (t0) {
+      debugLog("hydrationEnd", {
+        ms: Number((performance.now() - t0).toFixed(3)),
+        offlineGapSec: offline.gapSeconds,
+        offlineEarnedLoc: offline.locEarned,
+        burstSegSec: offline.burstSegmentSeconds,
+      });
+    }
   } catch {
     set({
       hasHydrated: true,
       hydrationStarted: false,
       lastTickTime: now,
+      activeNotification: makeNotification(
+        "Save issue",
+        "Could not load save — starting fresh."
+      ),
     });
   }
 };
@@ -718,7 +573,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const deltaSeconds = Math.max(0, Math.min(1.5, (timestamp - state.lastTickTime) / 1000));
     const meta = getMetaEffects(state);
     // e ndryshova ket karllikun e bona si toggle se spo punote sic ishte bo me perpara
-    let burstStillActive = state.cloudBurstActive;
+    let burstStillActive = deriveEffectiveCloudBurstActive(state, timestamp);
+    let newEndsAt = burstStillActive ? state.cloudBurstEndsAt : 0;
     let newTokens = state.tokens;
     if (burstStillActive) {
       const drain = newTokens * 0.01 * deltaSeconds;
@@ -726,9 +582,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (newTokens < 0.01) {
         newTokens = 0;
         burstStillActive = false;
+        newEndsAt = 0;
       }
     }
-    const income = buildIncomeSnapshot(state, burstStillActive);
+    const income = buildIncomeSnapshot(
+      { ...state, cloudBurstActive: burstStillActive },
+      burstStillActive
+    );
     const earnedTokens = income.passivePerSecond * deltaSeconds;
 
     let newStrain = gameMechanics.decayStrain(state.strainLevel, deltaSeconds);
@@ -780,7 +640,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let newEvent = state.activeEvent;
     let newLastEventTime = state.lastEventTime;
     let eventStrainMult = 1;
-    let eventSparkMult = 1;
     if (newEvent && timestamp > newEvent.endsAt) {
       newEvent = null;
     }
@@ -799,7 +658,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         newLastEventTime = timestamp;
       }
     }
-    if (newEvent?.id === "bug_swarm") { eventStrainMult = 2; eventSparkMult = 3; }
+    if (newEvent?.id === "bug_swarm") { eventStrainMult = 2; }
 
     // Achievement checks (only check unclaimed)
     const newAchievements = [...state.achievements];
@@ -823,6 +682,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       bonusWordExpiresAt: newBonusWordExpiresAt,
       bonusWordPosition: newBonusWordPosition,
       cloudBurstActive: burstStillActive,
+      cloudBurstEndsAt: newEndsAt,
       tokens: newTokens,
       lastTickTime: timestamp,
       comboCount: newCombo,
@@ -874,8 +734,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (state.isBurnedOut || !state.hasHydrated) return;
     const now = Date.now();
     const meta = getMetaEffects(state);
-    const burstStillActive = state.cloudBurstActive;
-    const income = buildIncomeSnapshot(state, burstStillActive);
+    const burstStillActive = deriveEffectiveCloudBurstActive(state, now);
+    const income = buildIncomeSnapshot(
+      { ...state, cloudBurstActive: burstStillActive },
+      burstStillActive
+    );
     const aiReduction = Math.max(0.2, 1 - state.aiPairLevel * 0.15);
     const strainMultiplier = aiReduction * meta.strainMultiplier;
     const newStrain = gameMechanics.getNewStrain(state.strainLevel, strainMultiplier);
@@ -894,6 +757,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       strainLevel: newStrain,
       isBurnedOut: gameMechanics.isBurnedOut(newStrain),
       cloudBurstActive: burstStillActive,
+      cloudBurstEndsAt: burstStillActive ? state.cloudBurstEndsAt : 0,
       comboCount: newCombo,
       lastTapTime: now,
       totalTaps: state.totalTaps + 1,
@@ -905,8 +769,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
   claimBonusWord: () => {
     const state = get();
     if (!state.activeBonusWord) return;
-    const burstStillActive = state.cloudBurstActive;
-    const income = buildIncomeSnapshot(state, burstStillActive);
+    const now = Date.now();
+    const burstStillActive = deriveEffectiveCloudBurstActive(state, now);
+    const income = buildIncomeSnapshot(
+      { ...state, cloudBurstActive: burstStillActive },
+      burstStillActive
+    );
     const bonus = Math.max(50, Math.floor(state.locCount * 0.15)) * income.incomeMultiplier;
     set({
       locCount: state.locCount + bonus,
@@ -992,14 +860,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   activateCloudBurst: () => {
     const state = get();
-    if (state.cloudBurstActive) {
-      set({ cloudBurstActive: false });
+    const now = Date.now();
+    if (deriveEffectiveCloudBurstActive(state, now)) {
+      set({ cloudBurstActive: false, cloudBurstEndsAt: 0 });
       void persistSnapshot(get());
       return;
     }
 
     if (state.tokens < 1) return;
-    set({ cloudBurstActive: true });
+    set({
+      cloudBurstActive: true,
+      cloudBurstEndsAt: now + cloudBurstDurationMs(),
+    });
     void persistSnapshot(get());
   },
 
@@ -1132,12 +1004,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   resetSave: () => {
     set({ ...defaultState, hasHydrated: true, lastTickTime: Date.now() });
-    void AsyncStorage.multiRemove([STORAGE_KEY_SAVE, STORAGE_KEY_LAST_ACTIVE]);
+    void AsyncStorage.multiRemove([
+      STORAGE_KEY_SAVE,
+      STORAGE_KEY_SAVE_PREV,
+      STORAGE_KEY_LAST_ACTIVE,
+      STORAGE_KEY_SAVE_LEGACY_V2,
+    ]);
   },
 
   exportSave: (): string => {
     const state = get();
-    const save = getPersistedState(state);
+    const save = serializePersistedSave(state);
     try {
       return btoa(JSON.stringify(save));
     } catch {
@@ -1162,29 +1039,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
 
     const record = raw as Record<string, unknown>;
-    if (typeof record.saveVersion !== "number") {
-      return { ok: false, error: "Save version missing or invalid." };
+    const des = deserializeSave(record);
+    if (!des.ok) {
+      return { ok: false, error: des.error };
     }
 
     const now = Date.now();
 
-    // Apply validated persisted fields first.
-    set(validateSave(record));
+    set(des.fields);
 
-    // Recompute derived/runtime fields and clear ephemeral UI/gameplay fields.
     const liveState = get();
-    const effectiveBurstActive =
-      liveState.cloudBurstEndsAt > 0 && now < liveState.cloudBurstEndsAt;
-    const snapshot = buildIncomeSnapshot(
-      { ...liveState, cloudBurstActive: effectiveBurstActive },
-      effectiveBurstActive
-    );
+    const runtime = deriveRuntimeFromPersisted(liveState, now);
 
     set({
-      locPerSecond: snapshot.passivePerSecond,
-      tapPower: snapshot.tapPower,
-      incomeMultiplier: snapshot.incomeMultiplier,
-      cloudBurstActive: effectiveBurstActive,
+      locPerSecond: runtime.locPerSecond,
+      tapPower: runtime.tapPower,
+      incomeMultiplier: runtime.incomeMultiplier,
+      cloudBurstActive: runtime.cloudBurstActive,
+      cloudBurstEndsAt: runtime.cloudBurstActive ? liveState.cloudBurstEndsAt : 0,
       activeSparks: [],
       activeBonusWord: null,
       bonusWordExpiresAt: null,
@@ -1201,11 +1073,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
     void (async () => {
       try {
         const state = get();
-        const saveState = getPersistedState(state);
-        await AsyncStorage.multiSet([
+        const saveState = serializePersistedSave(state);
+        const prev = await AsyncStorage.getItem(STORAGE_KEY_SAVE);
+        const entries: [string, string][] = [
           [STORAGE_KEY_SAVE, JSON.stringify(saveState)],
           [STORAGE_KEY_LAST_ACTIVE, now.toString()],
-        ]);
+        ];
+        if (prev) entries.push([STORAGE_KEY_SAVE_PREV, prev]);
+        await AsyncStorage.multiSet(entries);
         lastPersistedAt = now;
       } catch {
         // ignore persist failures

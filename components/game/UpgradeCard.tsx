@@ -1,12 +1,14 @@
 import { Cpu, GitBranch, Keyboard, Lock, Radar, Server, Terminal, Workflow, Zap } from "lucide-react-native";
-import React, { useRef } from "react";
+import React, { useMemo, useRef } from "react";
 import { Animated, Pressable, Text, View } from "react-native";
+import { useShallow } from "zustand/react/shallow";
 import { T } from "../../constants/theme";
+import { getCloudBurstIncomeMultiplierFromNodes } from "../../store/economy";
 import { getTierUnlockRequirement, getUpgradeCostMultiplier, useGameStore } from "../../store/gameStore";
 import { USE_NATIVE_ANIM_DRIVER } from "../../utils/animatedNativeDriver";
 import { formatNumber } from "../../utils/formatNumber";
 import type { UpgradeType } from "../../utils/scaling";
-import { getUpgradeCost, getUpgradeTierLabel, getBulkUpgradeInfo } from "../../utils/scaling";
+import { getUpgradeTierLabel, getBulkUpgradeInfo } from "../../utils/scaling";
 
 interface UpgradeCardProps {
   type: "autoCoder" | "server" | "keyboard" | "aiPair" | "gitAutopilot" | "cloudBurst" | "ciPipeline" | "observability";
@@ -16,15 +18,27 @@ interface UpgradeCardProps {
 }
 
 export const UpgradeCard: React.FC<UpgradeCardProps> = ({ type, title, unlocksAt, description }) => {
-  const locCount = useGameStore((s) => s.locCount);
-  const lifetimeLoc = useGameStore((s) => s.lifetimeLoc);
-  const rebootCount = useGameStore((s) => s.rebootCount);
-  const milestoneClaims = useGameStore((s) => s.milestoneClaims);
-  const unlockedMetaNodes = useGameStore((s) => s.unlockedMetaNodes);
-  const tokens = useGameStore((s) => s.tokens);
-  const cloudBurstActive = useGameStore((s) => s.cloudBurstActive);
-  const buyMultiplier = useGameStore((s) => s.buyMultiplier);
-  const useScientificNotation = useGameStore((s) => s.useScientificNotation);
+  const {
+    locCount,
+    lifetimeLoc,
+    rebootCount,
+    milestoneClaims,
+    unlockedMetaNodes,
+    tokens,
+    cloudBurstActive,
+    buyMultiplier,
+  } = useGameStore(
+    useShallow((s) => ({
+      locCount: s.locCount,
+      lifetimeLoc: s.lifetimeLoc,
+      rebootCount: s.rebootCount,
+      milestoneClaims: s.milestoneClaims,
+      unlockedMetaNodes: s.unlockedMetaNodes,
+      tokens: s.tokens,
+      cloudBurstActive: s.cloudBurstActive,
+      buyMultiplier: s.buyMultiplier,
+    }))
+  );
 
   const level = useGameStore((s) => {
     if (type === "autoCoder") return s.autoCoderLevel;
@@ -58,6 +72,33 @@ export const UpgradeCard: React.FC<UpgradeCardProps> = ({ type, title, unlocksAt
   if (lifetimeRequirement !== undefined && lifetimeLoc < lifetimeRequirement) lockReasons.push(`${formatNumber(lifetimeRequirement)} total LoC`);
   if (rebootRequirement !== undefined && rebootCount < rebootRequirement) lockReasons.push(`${rebootRequirement} reboot(s)`);
   if (requiredMilestoneId && !milestoneClaims.includes(requiredMilestoneId)) lockReasons.push("milestone");
+
+  const usesAdvanced =
+    type === "aiPair" ||
+    type === "gitAutopilot" ||
+    type === "ciPipeline" ||
+    type === "observability";
+  const costMult = getUpgradeCostMultiplier(type as UpgradeType);
+  const metaDiscount = unlockedMetaNodes.includes("couponCompiler") ? 0.12 : 0;
+
+  const bulkInfo = useMemo(
+    () => {
+      if (isLocked || type === "cloudBurst") {
+        return {
+          totalCost: 0,
+          levelsGained: 0,
+          isAffordable: false,
+          isTierLocked: false,
+          nextSingleCost: 0,
+        };
+      }
+      return getBulkUpgradeInfo(level, buyMultiplier, locCount, lifetimeLoc, {
+        costMultiplier: costMult,
+        metaDiscount,
+      });
+    },
+    [isLocked, type, level, buyMultiplier, locCount, lifetimeLoc, costMult, metaDiscount]
+  );
 
   if (isLocked) {
     return (
@@ -117,7 +158,9 @@ export const UpgradeCard: React.FC<UpgradeCardProps> = ({ type, title, unlocksAt
               color: T.text.muted, fontSize: T.font.xs, marginTop: T.space.xs, fontFamily: T.mono, minHeight: 30
             }}>
               {(() => {
-                const cloudBurstMult = unlockedMetaNodes.includes("burstDaemon") ? 3 : 2;
+                const cloudBurstMult = Math.round(
+                  getCloudBurstIncomeMultiplierFromNodes(unlockedMetaNodes)
+                );
                 return cloudBurstActive
                   ? `${cloudBurstMult}x LoC — draining 1%/sec (${formatNumber(Math.floor(tokens))} Tokens left)`
                   : `Toggle ${cloudBurstMult}x LoC production (drains 1% Tokens/sec)`;
@@ -156,18 +199,6 @@ export const UpgradeCard: React.FC<UpgradeCardProps> = ({ type, title, unlocksAt
       </View>
     );
   }
-
-  const usesAdvanced = type === "aiPair" || type === "gitAutopilot" || type === "ciPipeline" || type === "observability";
-  const costMult = getUpgradeCostMultiplier(type as UpgradeType);
-  const metaDiscount = unlockedMetaNodes.includes("couponCompiler") ? 0.12 : 0;
-  
-  const bulkInfo = getBulkUpgradeInfo(
-    level,
-    buyMultiplier,
-    locCount,
-    lifetimeLoc,
-    { costMultiplier: costMult, metaDiscount }
-  );
 
   const cost = bulkInfo.totalCost;
   const nextCost = bulkInfo.nextSingleCost;
