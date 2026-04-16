@@ -666,8 +666,7 @@ const bootHydration = async (
       ? Math.min(MAX_OFFLINE_SECONDS, (Date.now() - lastActive) / 1000)
       : 0;
 
-    const effectiveBurstActive =
-      liveState.cloudBurstEndsAt > 0 && now < liveState.cloudBurstEndsAt;
+    const effectiveBurstActive = liveState.cloudBurstActive;
     const snapshot = buildIncomeSnapshot(
       { ...liveState, cloudBurstActive: effectiveBurstActive },
       effectiveBurstActive
@@ -876,7 +875,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (state.isBurnedOut || !state.hasHydrated) return;
     const now = Date.now();
     const meta = getMetaEffects(state);
-    const burstStillActive = state.cloudBurstEndsAt > now;
+    const burstStillActive = state.cloudBurstActive;
     const income = buildIncomeSnapshot(state, burstStillActive);
     const aiReduction = Math.max(0.2, 1 - state.aiPairLevel * 0.15);
     const strainMultiplier = aiReduction * meta.strainMultiplier;
@@ -907,7 +906,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   claimBonusWord: () => {
     const state = get();
     if (!state.activeBonusWord) return;
-    const burstStillActive = state.cloudBurstEndsAt > Date.now();
+    const burstStillActive = state.cloudBurstActive;
     const income = buildIncomeSnapshot(state, burstStillActive);
     const bonus = Math.max(50, Math.floor(state.neuralTokens * 0.15)) * income.incomeMultiplier;
     set({
