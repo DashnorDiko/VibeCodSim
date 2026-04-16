@@ -5,10 +5,11 @@ import { formatNumber } from "../../utils/formatNumber";
 import { T } from "../../constants/theme";
 
 export const MilestonePanel: React.FC = () => {
-  const lifetimeTokens = useGameStore((s) => s.lifetimeTokens);
+  const lifetimeLoc = useGameStore((s) => s.lifetimeLoc);
   const rebootCount = useGameStore((s) => s.rebootCount);
   const milestoneClaims = useGameStore((s) => s.milestoneClaims);
   const claimMilestone = useGameStore((s) => s.claimMilestone);
+  const useScientificNotation = useGameStore((s) => s.useScientificNotation);
 
   return (
     <View style={{ marginHorizontal: T.space.lg, marginBottom: T.space.lg }}>
@@ -26,9 +27,9 @@ export const MilestonePanel: React.FC = () => {
 
       {MILESTONES.map((milestone) => {
         const claimed = milestoneClaims.includes(milestone.id);
-        const locTarget = milestone.lifetimeTokens ?? 0;
+        const locTarget = milestone.lifetimeLoc ?? 0;
         const rebootTarget = milestone.rebootCount ?? 0;
-        const locProgress = locTarget === 0 ? 1 : Math.min(1, lifetimeTokens / locTarget);
+        const locProgress = locTarget === 0 ? 1 : Math.min(1, lifetimeLoc / locTarget);
         const rebootProgress = rebootTarget === 0 ? 1 : Math.min(1, rebootCount / rebootTarget);
         const done = locProgress >= 1 && rebootProgress >= 1;
         const canClaim = done && !claimed;
@@ -74,7 +75,7 @@ export const MilestonePanel: React.FC = () => {
             </Text>
             {locTarget > 0 && (
               <Text style={{ color: T.text.muted, fontSize: T.font.xs, marginTop: T.space.xs, fontFamily: T.mono, marginLeft: 30 }}>
-                LoC: {formatNumber(lifetimeTokens)} / {formatNumber(locTarget)}
+                LoC: {formatNumber(lifetimeLoc)} / {formatNumber(locTarget)}
               </Text>
             )}
             {rebootTarget > 0 && (
@@ -83,7 +84,7 @@ export const MilestonePanel: React.FC = () => {
               </Text>
             )}
             <Text style={{ color: "#5f7fbd", fontSize: T.font.xs, marginTop: T.space.xs, fontFamily: T.mono, marginLeft: 30 }}>
-              +{milestone.rewardTokens ?? 0} LoC · +{milestone.rewardEnergyDrinks ?? 0} cans · +{milestone.rewardArchitecturePoints ?? 0} AP
+              +{milestone.rewardLoc ?? 0} LoC · +{milestone.rewardTokens ?? 0} Tokens · +{milestone.rewardArchitecturePoints ?? 0} AP
             </Text>
 
             <View style={{

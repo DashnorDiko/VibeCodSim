@@ -45,10 +45,10 @@ export const gameMechanics = {
   },
 
   getSparkReward: (
-    neuralTokens: number,
+    locCount: number,
     rewardMultiplier = 1
   ): number => {
-    const base = Math.max(150, Math.floor(neuralTokens * 0.15));
+    const base = Math.max(150, Math.floor(locCount * 0.15));
     return Math.max(150, Math.floor(base * rewardMultiplier));
   },
 };

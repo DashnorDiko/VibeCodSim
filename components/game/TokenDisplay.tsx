@@ -10,13 +10,14 @@ const glowStyle = Platform.OS === "web"
   : { textShadowColor: `${T.accent.blue}66`, textShadowRadius: 12, textShadowOffset: { width: 0, height: 0 } };
 
 export const TokenDisplay: React.FC = () => {
-  const neuralTokens = useGameStore((s) => s.neuralTokens);
-  const energyDrinks = useGameStore((s) => s.energyDrinks);
+  const locCount = useGameStore((s) => s.locCount);
+  const tokens = useGameStore((s) => s.tokens);
   const locPerSecond = useGameStore((s) => s.locPerSecond);
   const incomeMultiplier = useGameStore((s) => s.incomeMultiplier);
   const strainLevel = useGameStore((s) => s.strainLevel);
   const isBurnedOut = useGameStore((s) => s.isBurnedOut);
   const comboCount = useGameStore((s) => s.comboCount ?? 0);
+  const useScientificNotation = useGameStore((s) => s.useScientificNotation);
 
   const strainColor = isBurnedOut ? T.accent.red : strainLevel > 80 ? T.accent.yellow : T.text.muted;
 
@@ -40,7 +41,7 @@ export const TokenDisplay: React.FC = () => {
             fontFamily: T.mono,
             ...glowStyle,
           }}>
-            {formatNumber(neuralTokens)}{" "}
+            {formatNumber(locCount)}{" "}
             <Text style={{ color: T.accent.blue, fontSize: T.font.base, fontWeight: "600" }}>LoC</Text>
           </Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: T.space.sm, marginTop: T.space.xs }}>
@@ -90,13 +91,13 @@ export const TokenDisplay: React.FC = () => {
           source={require("../../assets/images/energy_drink.png")}
           resizeMode="contain"
           style={{ width: 16, height: 16 }}
-          accessibilityLabel="Energy drinks"
+          accessibilityLabel="Tokens"
         />
         <Text style={{ color: T.accent.green, fontSize: T.font.lg, fontWeight: "bold", fontFamily: T.mono }}>
-          {energyDrinks.toLocaleString()}
+          {formatNumber(tokens)}
         </Text>
         <Text style={{ color: T.text.muted, fontSize: T.font.xs, fontFamily: T.mono, textTransform: "uppercase" }}>
-          cans
+          Tokens
         </Text>
       </View>
 

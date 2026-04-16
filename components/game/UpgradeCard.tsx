@@ -16,14 +16,15 @@ interface UpgradeCardProps {
 }
 
 export const UpgradeCard: React.FC<UpgradeCardProps> = ({ type, title, unlocksAt, description }) => {
-  const neuralTokens = useGameStore((s) => s.neuralTokens);
-  const lifetimeTokens = useGameStore((s) => s.lifetimeTokens);
+  const locCount = useGameStore((s) => s.locCount);
+  const lifetimeLoc = useGameStore((s) => s.lifetimeLoc);
   const rebootCount = useGameStore((s) => s.rebootCount);
   const milestoneClaims = useGameStore((s) => s.milestoneClaims);
   const unlockedMetaNodes = useGameStore((s) => s.unlockedMetaNodes);
-  const energyDrinks = useGameStore((s) => s.energyDrinks);
+  const tokens = useGameStore((s) => s.tokens);
   const cloudBurstActive = useGameStore((s) => s.cloudBurstActive);
   const buyMultiplier = useGameStore((s) => s.buyMultiplier);
+  const useScientificNotation = useGameStore((s) => s.useScientificNotation);
 
   const level = useGameStore((s) => {
     if (type === "autoCoder") return s.autoCoderLevel;
@@ -46,15 +47,15 @@ export const UpgradeCard: React.FC<UpgradeCardProps> = ({ type, title, unlocksAt
   const lifetimeRequirement = type === "aiPair" ? 500 : type === "gitAutopilot" ? 5_000 : type === "cloudBurst" ? 50_000 : type === "ciPipeline" ? 250_000 : type === "observability" ? 1_000_000 : undefined;
   const rebootRequirement = type === "ciPipeline" ? 1 : type === "observability" ? 2 : undefined;
   const requiredMilestoneId = type === "ciPipeline" ? "m_first_reboot" : type === "observability" ? "m_scale_1m" : undefined;
-  const lockedByLegacy = unlocksAt !== undefined && lifetimeTokens < unlocksAt;
+  const lockedByLegacy = unlocksAt !== undefined && lifetimeLoc < unlocksAt;
 
   const isLocked = lockedByLegacy
-    || (lifetimeRequirement !== undefined && lifetimeTokens < lifetimeRequirement)
+    || (lifetimeRequirement !== undefined && lifetimeLoc < lifetimeRequirement)
     || (rebootRequirement !== undefined && rebootCount < rebootRequirement)
     || (requiredMilestoneId !== undefined && !milestoneClaims.includes(requiredMilestoneId));
 
   const lockReasons: string[] = [];
-  if (lifetimeRequirement !== undefined && lifetimeTokens < lifetimeRequirement) lockReasons.push(`${formatNumber(lifetimeRequirement)} total LoC`);
+  if (lifetimeRequirement !== undefined && lifetimeLoc < lifetimeRequirement) lockReasons.push(`${formatNumber(lifetimeRequirement)} total LoC`);
   if (rebootRequirement !== undefined && rebootCount < rebootRequirement) lockReasons.push(`${rebootRequirement} reboot(s)`);
   if (requiredMilestoneId && !milestoneClaims.includes(requiredMilestoneId)) lockReasons.push("milestone");
 
@@ -89,7 +90,7 @@ export const UpgradeCard: React.FC<UpgradeCardProps> = ({ type, title, unlocksAt
   }
 
   if (type === "cloudBurst") {
-    const canToggleOn = !cloudBurstActive && energyDrinks >= 1;
+    const canToggleOn = !cloudBurstActive && tokens >= 1;
     const canInteract = cloudBurstActive || canToggleOn;
 
     return (
@@ -115,9 +116,12 @@ export const UpgradeCard: React.FC<UpgradeCardProps> = ({ type, title, unlocksAt
             <Text style={{
               color: T.text.muted, fontSize: T.font.xs, marginTop: T.space.xs, fontFamily: T.mono, minHeight: 30
             }}>
-              {cloudBurstActive
-                ? `2x LoC — draining 1%/sec (${Math.floor(energyDrinks)} cans left)`
-                : `Toggle 2x LoC production (drains 1% cans/sec)`}
+              {(() => {
+                const cloudBurstMult = unlockedMetaNodes.includes("burstDaemon") ? 3 : 2;
+                return cloudBurstActive
+                  ? `${cloudBurstMult}x LoC — draining 1%/sec (${formatNumber(Math.floor(tokens))} Tokens left)`
+                  : `Toggle ${cloudBurstMult}x LoC production (drains 1% Tokens/sec)`;
+              })()}
             </Text>
           </View>
           <Pressable
@@ -160,8 +164,8 @@ export const UpgradeCard: React.FC<UpgradeCardProps> = ({ type, title, unlocksAt
   const bulkInfo = getBulkUpgradeInfo(
     level,
     buyMultiplier,
-    neuralTokens,
-    lifetimeTokens,
+    locCount,
+    lifetimeLoc,
     { costMultiplier: costMult, metaDiscount }
   );
 
@@ -171,7 +175,7 @@ export const UpgradeCard: React.FC<UpgradeCardProps> = ({ type, title, unlocksAt
   
   const tierLabel = getUpgradeTierLabel(level);
   const tierReq = getTierUnlockRequirement(Math.floor(level / 20) + 1);
-  const tierUnlocked = lifetimeTokens >= tierReq;
+  const tierUnlocked = lifetimeLoc >= tierReq;
 
   const getIcon = () => {
     const c = canAfford ? accent : T.text.muted;

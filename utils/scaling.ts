@@ -83,12 +83,12 @@ export const getTierUnlockRequirement = (tier: number): number => {
 
 export const getUpgradeUnlockRequirement = (
   type: UpgradeType
-): { lifetimeTokens?: number; rebootCount?: number } => {
-  if (type === "aiPair") return { lifetimeTokens: 500 };
-  if (type === "gitAutopilot") return { lifetimeTokens: 5_000 };
-  if (type === "cloudBurst") return { lifetimeTokens: 50_000 };
-  if (type === "ciPipeline") return { lifetimeTokens: 250_000, rebootCount: 1 };
-  if (type === "observability") return { lifetimeTokens: 1_000_000, rebootCount: 2 };
+): { lifetimeLoc?: number; rebootCount?: number } => {
+  if (type === "aiPair") return { lifetimeLoc: 500 };
+  if (type === "gitAutopilot") return { lifetimeLoc: 5_000 };
+  if (type === "cloudBurst") return { lifetimeLoc: 50_000 };
+  if (type === "ciPipeline") return { lifetimeLoc: 250_000, rebootCount: 1 };
+  if (type === "observability") return { lifetimeLoc: 1_000_000, rebootCount: 2 };
   return {};
 };
 
@@ -106,7 +106,7 @@ export const getBulkUpgradeInfo = (
   currentLevel: number,
   targetAmount: BuyMultiplier,
   availableTokens: number,
-  lifetimeTokens: number,
+  lifetimeLoc: number,
   options: UpgradeCostOptions = {}
 ): BulkPurchaseInfo => {
   let totalCost = 0;
@@ -118,7 +118,7 @@ export const getBulkUpgradeInfo = (
 
   for (let i = 0; i < maxIterations; i++) {
     const tierReq = getTierUnlockRequirement(Math.floor(simulatedLevel / 20) + 1);
-    if (lifetimeTokens < tierReq) {
+    if (lifetimeLoc < tierReq) {
       if (levelsGained === 0) isTierLocked = true;
       break;
     }

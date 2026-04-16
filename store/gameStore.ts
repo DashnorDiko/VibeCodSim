@@ -9,6 +9,7 @@ import {
   type BuyMultiplier,
   getBulkUpgradeInfo,
 } from "../utils/scaling";
+import { formatNumber } from "../utils/formatNumber";
 
 export interface Spark {
   id: string;
@@ -30,10 +31,10 @@ export interface MilestoneDefinition {
   id: string;
   title: string;
   description: string;
-  lifetimeTokens?: number;
+  lifetimeLoc?: number;
   rebootCount?: number;
+  rewardLoc?: number;
   rewardTokens?: number;
-  rewardEnergyDrinks?: number;
   rewardArchitecturePoints?: number;
 }
 
@@ -66,8 +67,8 @@ interface GameState {
   hasHydrated: boolean;
   hydrationStarted: boolean;
 
-  neuralTokens: number;
-  lifetimeTokens: number;
+  locCount: number;
+  lifetimeLoc: number;
   locPerSecond: number;
   tapPower: number;
   incomeMultiplier: number;
@@ -90,8 +91,8 @@ interface GameState {
   lastTapTime: number;
   activeSparks: Spark[];
 
-  energyDrinks: number;
-  energyTechLevel: number;
+  tokens: number;
+  tokenTechLevel: number;
   rebootPrestigeLevel: number;
   rebootCount: number;
 
@@ -123,10 +124,11 @@ interface GameState {
   autoBuyEnabled: Record<string, boolean>;
 
   lastTickTime: number;
-  offlineEarnedTokens: number;
+  offlineEarnedLoc: number;
   offlineEarnedSeconds: number;
 
   buyMultiplier: BuyMultiplier;
+  useScientificNotation: boolean;
 }
 
 interface GameActions {
@@ -142,7 +144,7 @@ interface GameActions {
   claimBonusWord: () => void;
   masterTick: (timestamp: number) => void;
   collectSpark: (id: string) => void;
-  purchaseEnergyUpgrade: () => void;
+  purchaseTokenUpgrade: () => void;
   purchaseMetaNode: (nodeId: string) => void;
   respecMetaTree: () => void;
   claimMilestone: (milestoneId: string) => void;
@@ -154,6 +156,7 @@ interface GameActions {
   exportSave: () => string;
   importSave: (encoded: string) => { ok: true } | { ok: false; error: string };
   setBuyMultiplier: (mult: BuyMultiplier) => void;
+  setUseScientificNotation: (enabled: boolean) => void;
 }
 
 type GameStore = GameState & GameActions;
@@ -220,7 +223,7 @@ const META_NODE_DEFINITIONS: MetaNodeDefinition[] = [
   {
     id: "burstDaemon",
     title: "Burst Daemon",
-    description: "Cloud Burst lasts 12s longer",
+    description: "Cloud Burst is 50% more effective (3x multi)",
     cost: 3,
     requires: ["couponCompiler"],
   },
@@ -251,8 +254,8 @@ const MILESTONES: MilestoneDefinition[] = [
     id: "m_first_50k",
     title: "Hello Production",
     description: "Reach 50,000 total generated LoC",
-    lifetimeTokens: 50_000,
-    rewardEnergyDrinks: 3,
+    lifetimeLoc: 50_000,
+    rewardTokens: 3,
     rewardArchitecturePoints: 1,
   },
   {
@@ -266,17 +269,17 @@ const MILESTONES: MilestoneDefinition[] = [
     id: "m_scale_1m",
     title: "Scaled Systems",
     description: "Reach 1,000,000 total generated LoC",
-    lifetimeTokens: 1_000_000,
-    rewardTokens: 15_000,
+    lifetimeLoc: 1_000_000,
+    rewardLoc: 15_000,
     rewardArchitecturePoints: 2,
   },
   {
     id: "m_scale_10m",
     title: "Planetary Deploy",
     description: "Reach 10,000,000 total generated LoC",
-    lifetimeTokens: 10_000_000,
-    rewardTokens: 250_000,
-    rewardEnergyDrinks: 25,
+    lifetimeLoc: 10_000_000,
+    rewardLoc: 250_000,
+    rewardTokens: 25,
     rewardArchitecturePoints: 4,
   },
   {
@@ -290,25 +293,25 @@ const MILESTONES: MilestoneDefinition[] = [
     id: "m_scale_50m",
     title: "Galactic Coder",
     description: "Reach 50,000,000 total generated LoC",
-    lifetimeTokens: 50_000_000,
-    rewardTokens: 1_000_000,
+    lifetimeLoc: 50_000_000,
+    rewardLoc: 1_000_000,
     rewardArchitecturePoints: 5,
   },
   {
     id: "m_scale_100m",
     title: "Cosmic Deploy",
     description: "Reach 100,000,000 total generated LoC",
-    lifetimeTokens: 100_000_000,
-    rewardTokens: 5_000_000,
-    rewardEnergyDrinks: 50,
+    lifetimeLoc: 100_000_000,
+    rewardLoc: 5_000_000,
+    rewardTokens: 50,
     rewardArchitecturePoints: 8,
   },
   {
     id: "m_scale_1b",
     title: "Universal Runtime",
     description: "Reach 1,000,000,000 total generated LoC",
-    lifetimeTokens: 1_000_000_000,
-    rewardTokens: 50_000_000,
+    lifetimeLoc: 1_000_000_000,
+    rewardLoc: 50_000_000,
     rewardArchitecturePoints: 15,
   },
   {
@@ -336,12 +339,12 @@ export interface AchievementDefinition {
 }
 
 const ACHIEVEMENT_DEFINITIONS: AchievementDefinition[] = [
-  { id: "a_first_100", title: "Hello World", description: "Earn 100 LoC", category: "economy", check: (s) => s.lifetimeTokens >= 100 },
-  { id: "a_first_1k", title: "Junior Dev", description: "Earn 1,000 LoC", category: "economy", check: (s) => s.lifetimeTokens >= 1_000 },
-  { id: "a_first_10k", title: "Mid-Level", description: "Earn 10,000 LoC", category: "economy", check: (s) => s.lifetimeTokens >= 10_000 },
-  { id: "a_first_100k", title: "Senior Engineer", description: "Earn 100,000 LoC", category: "economy", check: (s) => s.lifetimeTokens >= 100_000 },
-  { id: "a_millionaire", title: "Millionaire", description: "Earn 1,000,000 LoC", category: "economy", check: (s) => s.lifetimeTokens >= 1_000_000 },
-  { id: "a_billionaire", title: "Billionaire", description: "Earn 1,000,000,000 LoC", category: "economy", check: (s) => s.lifetimeTokens >= 1_000_000_000 },
+  { id: "a_first_100", title: "Hello World", description: "Earn 100 LoC", category: "economy", check: (s) => s.lifetimeLoc >= 100 },
+  { id: "a_first_1k", title: "Junior Dev", description: "Earn 1,000 LoC", category: "economy", check: (s) => s.lifetimeLoc >= 1_000 },
+  { id: "a_first_10k", title: "Mid-Level", description: "Earn 10,000 LoC", category: "economy", check: (s) => s.lifetimeLoc >= 10_000 },
+  { id: "a_first_100k", title: "Senior Engineer", description: "Earn 100,000 LoC", category: "economy", check: (s) => s.lifetimeLoc >= 100_000 },
+  { id: "a_millionaire", title: "Millionaire", description: "Earn 1,000,000 LoC", category: "economy", check: (s) => s.lifetimeLoc >= 1_000_000 },
+  { id: "a_billionaire", title: "Billionaire", description: "Earn 1,000,000,000 LoC", category: "economy", check: (s) => s.lifetimeLoc >= 1_000_000_000 },
   { id: "a_100_taps", title: "Keyboard Warrior", description: "Tap 100 times", category: "tapping", check: (s) => s.totalTaps >= 100 },
   { id: "a_1k_taps", title: "Carpal Tunnel", description: "Tap 1,000 times", category: "tapping", check: (s) => s.totalTaps >= 1_000 },
   { id: "a_10k_taps", title: "Mechanical Madness", description: "Tap 10,000 times", category: "tapping", check: (s) => s.totalTaps >= 10_000 },
@@ -373,13 +376,13 @@ const EVENT_DEFINITIONS = [
 const EVENT_INTERVAL_MIN = 120;
 const EVENT_INTERVAL_MAX = 300;
 
-const getPrestigeMultiplier = (energyTechLevel: number, rebootPrestigeLevel: number): number => {
-  const shopBonus = energyTechLevel * 0.2 * (1 / (1 + energyTechLevel * 0.05));
+const getPrestigeMultiplier = (tokenTechLevel: number, rebootPrestigeLevel: number): number => {
+  const shopBonus = tokenTechLevel * 0.2 * (1 / (1 + tokenTechLevel * 0.05));
   const rebootBonus = rebootPrestigeLevel * 0.15 * (1 / (1 + rebootPrestigeLevel * 0.03));
   return 1 + shopBonus + rebootBonus;
 };
 
-const getEnergyTechCost = (level: number): number => {
+const getTokenTechCost = (level: number): number => {
   return Math.floor(5 * Math.pow(2.5, level));
 };
 
@@ -398,7 +401,7 @@ const getMetaEffects = (state: Pick<GameState, "unlockedMetaNodes">): MetaEffect
     sparkChanceMultiplier: has("sparkMagnet") ? 1.25 : 1,
     sparkRewardMultiplier: has("sparkMagnet") ? 1.3 : 1,
     strainMultiplier: has("steadyHands") ? 0.9 : 1,
-    cloudBurstDurationBonus: has("burstDaemon") ? 12 : 0,
+    cloudBurstMultiplierBonus: has("burstDaemon") ? 1 : 0,
   };
 };
 
@@ -425,7 +428,7 @@ const getUpgradeCostMultiplier = (type: UpgradeType): number => {
 
 const isUpgradeUnlocked = (state: GameState, type: UpgradeType): boolean => {
   const requirements = getUpgradeUnlockRequirement(type);
-  if (requirements.lifetimeTokens && state.lifetimeTokens < requirements.lifetimeTokens) {
+  if (requirements.lifetimeLoc && state.lifetimeLoc < requirements.lifetimeLoc) {
     return false;
   }
   if (requirements.rebootCount && state.rebootCount < requirements.rebootCount) {
@@ -445,11 +448,11 @@ const buildIncomeSnapshot = (
   includeCloudBurst: boolean
 ): { passivePerSecond: number; tapPower: number; incomeMultiplier: number } => {
   const meta = getMetaEffects(state);
-  const prestigeMultiplier = getPrestigeMultiplier(state.energyTechLevel, state.rebootPrestigeLevel);
+  const prestigeMultiplier = getPrestigeMultiplier(state.tokenTechLevel, state.rebootPrestigeLevel);
   const gitBonus = 1 + state.gitAutopilotLevel * 0.1;
   const ciBonus = 1 + state.ciPipelineLevel * 0.2;
   const obsBonus = 1 + state.observabilityLevel * 0.35;
-  const cloudMultiplier = includeCloudBurst ? 2 : 1;
+  const cloudMultiplier = includeCloudBurst ? (2 + meta.cloudBurstMultiplierBonus) : 1;
 
   const passivePerSecond =
     (state.serverLevel * 0.5 + state.autoCoderLevel * 0.3 + state.keyboardLevel * 0.18) *
@@ -481,7 +484,7 @@ const buildIncomeSnapshot = (
 };
 
 const isMilestoneComplete = (state: GameState, milestone: MilestoneDefinition): boolean => {
-  if (milestone.lifetimeTokens && state.lifetimeTokens < milestone.lifetimeTokens) {
+  if (milestone.lifetimeLoc && state.lifetimeLoc < milestone.lifetimeLoc) {
     return false;
   }
   if (milestone.rebootCount && state.rebootCount < milestone.rebootCount) {
@@ -493,8 +496,8 @@ const isMilestoneComplete = (state: GameState, milestone: MilestoneDefinition): 
 const getPersistedState = (state: GameState) => {
   return {
     saveVersion: SAVE_VERSION,
-    neuralTokens: state.neuralTokens,
-    lifetimeTokens: state.lifetimeTokens,
+    locCount: state.locCount,
+    lifetimeLoc: state.lifetimeLoc,
     autoCoderLevel: state.autoCoderLevel,
     serverLevel: state.serverLevel,
     keyboardLevel: state.keyboardLevel,
@@ -508,8 +511,8 @@ const getPersistedState = (state: GameState) => {
     isBurnedOut: state.isBurnedOut,
     comboCount: state.comboCount,
     lastTapTime: state.lastTapTime,
-    energyDrinks: state.energyDrinks,
-    energyTechLevel: state.energyTechLevel,
+    tokens: state.tokens,
+    tokenTechLevel: state.tokenTechLevel,
     rebootPrestigeLevel: state.rebootPrestigeLevel,
     rebootCount: state.rebootCount,
     architecturePoints: state.architecturePoints,
@@ -524,6 +527,7 @@ const getPersistedState = (state: GameState) => {
     lastEventTime: state.lastEventTime,
     autoBuyEnabled: state.autoBuyEnabled,
     buyMultiplier: state.buyMultiplier,
+    useScientificNotation: state.useScientificNotation,
   };
 };
 
@@ -543,8 +547,8 @@ const defaultState: GameState = {
   hasHydrated: false,
   hydrationStarted: false,
 
-  neuralTokens: 0,
-  lifetimeTokens: 0,
+  locCount: 0,
+  lifetimeLoc: 0,
   locPerSecond: 0,
   tapPower: 1,
   incomeMultiplier: 1,
@@ -567,8 +571,8 @@ const defaultState: GameState = {
   lastTapTime: 0,
   activeSparks: [],
 
-  energyDrinks: 0,
-  energyTechLevel: 0,
+  tokens: 0,
+  tokenTechLevel: 0,
   rebootPrestigeLevel: 0,
   rebootCount: 0,
 
@@ -596,10 +600,11 @@ const defaultState: GameState = {
   autoBuyEnabled: {},
 
   lastTickTime: 0,
-  offlineEarnedTokens: 0,
+  offlineEarnedLoc: 0,
   offlineEarnedSeconds: 0,
 
   buyMultiplier: 1,
+  useScientificNotation: false,
 };
 
 const clampNum = (v: unknown, min: number, max: number, fallback: number): number => {
@@ -610,8 +615,8 @@ const clampNum = (v: unknown, min: number, max: number, fallback: number): numbe
 const validateSave = (raw: Record<string, unknown>): Partial<GameState> => {
   const MAX_SAFE = 1e18;
   return {
-    neuralTokens: clampNum(raw.neuralTokens, 0, MAX_SAFE, 0),
-    lifetimeTokens: clampNum(raw.lifetimeTokens, 0, MAX_SAFE, 0),
+    locCount: clampNum(raw.locCount ?? raw.neuralTokens, 0, MAX_SAFE, 0),
+    lifetimeLoc: clampNum(raw.lifetimeLoc ?? raw.lifetimeTokens, 0, MAX_SAFE, 0),
     autoCoderLevel: clampNum(raw.autoCoderLevel, 0, 999, 0),
     serverLevel: clampNum(raw.serverLevel, 0, 999, 0),
     keyboardLevel: clampNum(raw.keyboardLevel, 0, 999, 0),
@@ -623,8 +628,8 @@ const validateSave = (raw: Record<string, unknown>): Partial<GameState> => {
     cloudBurstEndsAt: clampNum(raw.cloudBurstEndsAt, 0, MAX_SAFE, 0),
     strainLevel: clampNum(raw.strainLevel, 0, 100, 0),
     isBurnedOut: typeof raw.isBurnedOut === "boolean" ? raw.isBurnedOut : false,
-    energyDrinks: clampNum(raw.energyDrinks, 0, MAX_SAFE, 0),
-    energyTechLevel: clampNum(raw.energyTechLevel, 0, 20, 0),
+    tokens: clampNum(raw.tokens ?? raw.energyDrinks, 0, MAX_SAFE, 0),
+    tokenTechLevel: clampNum(raw.tokenTechLevel ?? raw.energyTechLevel, 0, 20, 0),
     rebootPrestigeLevel: clampNum(raw.rebootPrestigeLevel, 0, 999, 0),
     rebootCount: clampNum(raw.rebootCount, 0, 999, 0),
     architecturePoints: clampNum(raw.architecturePoints, 0, MAX_SAFE, 0),
@@ -641,6 +646,7 @@ const validateSave = (raw: Record<string, unknown>): Partial<GameState> => {
     lastEventTime: clampNum(raw.lastEventTime, 0, MAX_SAFE, 0),
     autoBuyEnabled: (typeof raw.autoBuyEnabled === "object" && raw.autoBuyEnabled !== null) ? raw.autoBuyEnabled as Record<string, boolean> : {},
     buyMultiplier: [1, 10, 100, "MAX"].includes(raw.buyMultiplier as any) ? (raw.buyMultiplier as BuyMultiplier) : 1,
+    useScientificNotation: typeof raw.useScientificNotation === "boolean" ? raw.useScientificNotation : false,
   };
 };
 
@@ -675,9 +681,9 @@ const bootHydration = async (
       gapSeconds > 5 ? snapshot.passivePerSecond * gapSeconds : 0;
 
     set({
-      neuralTokens: liveState.neuralTokens + offlineEarned,
-      lifetimeTokens: liveState.lifetimeTokens + offlineEarned,
-      offlineEarnedTokens: offlineEarned,
+      locCount: liveState.locCount + offlineEarned,
+      lifetimeLoc: liveState.lifetimeLoc + offlineEarned,
+      offlineEarnedLoc: offlineEarned,
       offlineEarnedSeconds: gapSeconds,
       locPerSecond: snapshot.passivePerSecond,
       tapPower: snapshot.tapPower,
@@ -720,12 +726,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const meta = getMetaEffects(state);
     // e ndryshova ket karllikun e bona si toggle se spo punote sic ishte bo me perpara
     let burstStillActive = state.cloudBurstActive;
-    let newEnergyDrinks = state.energyDrinks;
+    let newTokens = state.tokens;
     if (burstStillActive) {
-      const drain = newEnergyDrinks * 0.01 * deltaSeconds;
-      newEnergyDrinks = Math.max(0, newEnergyDrinks - drain);
-      if (newEnergyDrinks < 0.01) {
-        newEnergyDrinks = 0;
+      const drain = newTokens * 0.01 * deltaSeconds;
+      newTokens = Math.max(0, newTokens - drain);
+      if (newTokens < 0.01) {
+        newTokens = 0;
         burstStillActive = false;
       }
     }
@@ -742,7 +748,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         id: `consolation-${Math.random().toString(36).slice(2, 10)}`,
         x: 50,
         y: 50,
-        value: gameMechanics.getSparkReward(state.neuralTokens, meta.sparkRewardMultiplier),
+        value: gameMechanics.getSparkReward(state.locCount, meta.sparkRewardMultiplier),
         expiresAt: timestamp + 10_000,
       });
     }
@@ -752,7 +758,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         id: Math.random().toString(36).slice(2, 10),
         x: Math.floor(Math.random() * 75) + 10,
         y: Math.floor(Math.random() * 75) + 10,
-        value: gameMechanics.getSparkReward(state.neuralTokens, meta.sparkRewardMultiplier),
+        value: gameMechanics.getSparkReward(state.locCount, meta.sparkRewardMultiplier),
         expiresAt: timestamp + 8_000,
       });
     }
@@ -804,7 +810,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     // Achievement checks (only check unclaimed)
     const newAchievements = [...state.achievements];
-    const stateForCheck = { ...state, neuralTokens: state.neuralTokens + earnedTokens, lifetimeTokens: state.lifetimeTokens + earnedTokens };
+    const stateForCheck = { ...state, locCount: state.locCount + earnedTokens, lifetimeLoc: state.lifetimeLoc + earnedTokens };
     for (const ach of ACHIEVEMENT_DEFINITIONS) {
       if (!newAchievements.includes(ach.id) && ach.check(stateForCheck)) {
         newAchievements.push(ach.id);
@@ -812,8 +818,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
 
     set({
-      neuralTokens: state.neuralTokens + earnedTokens,
-      lifetimeTokens: state.lifetimeTokens + earnedTokens,
+      locCount: state.locCount + earnedTokens,
+      lifetimeLoc: state.lifetimeLoc + earnedTokens,
       locPerSecond: income.passivePerSecond,
       tapPower: income.tapPower,
       incomeMultiplier: income.incomeMultiplier,
@@ -824,7 +830,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       bonusWordExpiresAt: newBonusWordExpiresAt,
       bonusWordPosition: newBonusWordPosition,
       cloudBurstActive: burstStillActive,
-      energyDrinks: newEnergyDrinks,
+      tokens: newTokens,
       lastTickTime: timestamp,
       comboCount: newCombo,
       totalTimePlayed: state.totalTimePlayed + deltaSeconds,
@@ -840,11 +846,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (postState.autoBuyEnabled[t]) {
         const lvl = getUpgradeLevel(postState, t);
         const tierReq = getTierUnlockRequirement(Math.floor(lvl / 20) + 1);
-        if (postState.lifetimeTokens < tierReq) continue;
+        if (postState.lifetimeLoc < tierReq) continue;
         if (!isUpgradeUnlocked(postState, t)) continue;
         const metaEff = getMetaEffects(postState);
         const c = getUpgradeCost(lvl, { costMultiplier: getUpgradeCostMultiplier(t), metaDiscount: metaEff.costDiscount });
-        if (postState.neuralTokens >= c) {
+        if (postState.locCount >= c) {
           const isBasic = t === "autoCoder" || t === "server" || t === "keyboard";
           if (isBasic) {
             postState.purchaseUpgrade(t as "autoCoder" | "server" | "keyboard");
@@ -863,7 +869,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const spark = state.activeSparks.find((entry) => entry.id === id);
     if (!spark) return;
     set({
-      energyDrinks: state.energyDrinks + spark.value,
+      tokens: state.tokens + spark.value,
       activeSparks: state.activeSparks.filter((entry) => entry.id !== id),
       totalSparksCollected: state.totalSparksCollected + 1,
     });
@@ -888,8 +894,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const finalTapPower = income.tapPower * comboMultiplier * eventTapMult;
 
     set({
-      neuralTokens: state.neuralTokens + finalTapPower,
-      lifetimeTokens: state.lifetimeTokens + finalTapPower,
+      locCount: state.locCount + finalTapPower,
+      lifetimeLoc: state.lifetimeLoc + finalTapPower,
       tapPower: income.tapPower,
       incomeMultiplier: income.incomeMultiplier,
       strainLevel: newStrain,
@@ -908,10 +914,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!state.activeBonusWord) return;
     const burstStillActive = state.cloudBurstActive;
     const income = buildIncomeSnapshot(state, burstStillActive);
-    const bonus = Math.max(50, Math.floor(state.neuralTokens * 0.15)) * income.incomeMultiplier;
+    const bonus = Math.max(50, Math.floor(state.locCount * 0.15)) * income.incomeMultiplier;
     set({
-      neuralTokens: state.neuralTokens + bonus,
-      lifetimeTokens: state.lifetimeTokens + bonus,
+      locCount: state.locCount + bonus,
+      lifetimeLoc: state.lifetimeLoc + bonus,
       activeBonusWord: null,
       bonusWordExpiresAt: null,
       bonusWordPosition: null,
@@ -942,8 +948,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const bulkInfo = getBulkUpgradeInfo(
       level,
       state.buyMultiplier,
-      state.neuralTokens,
-      state.lifetimeTokens,
+      state.locCount,
+      state.lifetimeLoc,
       {
         costMultiplier: getUpgradeCostMultiplier(typed),
         metaDiscount: meta.costDiscount,
@@ -953,7 +959,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!bulkInfo.isAffordable) return;
     if (bulkInfo.levelsGained === 0) return;
 
-    const next = { neuralTokens: state.neuralTokens - bulkInfo.totalCost } as Partial<GameState>;
+    const next = { locCount: state.locCount - bulkInfo.totalCost } as Partial<GameState>;
     if (type === "autoCoder") next.autoCoderLevel = state.autoCoderLevel + bulkInfo.levelsGained;
     if (type === "server") next.serverLevel = state.serverLevel + bulkInfo.levelsGained;
     if (type === "keyboard") next.keyboardLevel = state.keyboardLevel + bulkInfo.levelsGained;
@@ -971,8 +977,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const bulkInfo = getBulkUpgradeInfo(
       level,
       state.buyMultiplier,
-      state.neuralTokens,
-      state.lifetimeTokens,
+      state.locCount,
+      state.lifetimeLoc,
       {
         costMultiplier: getUpgradeCostMultiplier(typed),
         metaDiscount: meta.costDiscount,
@@ -982,7 +988,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!bulkInfo.isAffordable) return;
     if (bulkInfo.levelsGained === 0) return;
 
-    const next = { neuralTokens: state.neuralTokens - bulkInfo.totalCost } as Partial<GameState>;
+    const next = { locCount: state.locCount - bulkInfo.totalCost } as Partial<GameState>;
     if (type === "aiPair") next.aiPairLevel = state.aiPairLevel + bulkInfo.levelsGained;
     if (type === "gitAutopilot") next.gitAutopilotLevel = state.gitAutopilotLevel + bulkInfo.levelsGained;
     if (type === "ciPipeline") next.ciPipelineLevel = state.ciPipelineLevel + bulkInfo.levelsGained;
@@ -999,19 +1005,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return;
     }
 
-    if (state.energyDrinks < 1) return;
+    if (state.tokens < 1) return;
     set({ cloudBurstActive: true });
     void persistSnapshot(get());
   },
 
-  purchaseEnergyUpgrade: () => {
+  purchaseTokenUpgrade: () => {
     const state = get();
-    if (state.energyTechLevel >= 20) return;
-    const cost = getEnergyTechCost(state.energyTechLevel);
-    if (state.energyDrinks < cost) return;
+    if (state.tokenTechLevel >= 20) return;
+    const cost = getTokenTechCost(state.tokenTechLevel);
+    if (state.tokens < cost) return;
     set({
-      energyDrinks: state.energyDrinks - cost,
-      energyTechLevel: state.energyTechLevel + 1,
+      tokens: state.tokens - cost,
+      tokenTechLevel: state.tokenTechLevel + 1,
     });
     void persistSnapshot(get());
   },
@@ -1056,19 +1062,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!milestone) return;
     if (!isMilestoneComplete(state, milestone)) return;
 
+    const rewardLoc = milestone.rewardLoc ?? 0;
     const rewardTokens = milestone.rewardTokens ?? 0;
-    const rewardEnergyDrinks = milestone.rewardEnergyDrinks ?? 0;
     const rewardArchitecturePoints = milestone.rewardArchitecturePoints ?? 0;
 
     set({
-      neuralTokens: state.neuralTokens + rewardTokens,
-      lifetimeTokens: state.lifetimeTokens + rewardTokens,
-      energyDrinks: state.energyDrinks + rewardEnergyDrinks,
+      locCount: state.locCount + rewardLoc,
+      lifetimeLoc: state.lifetimeLoc + rewardLoc,
+      tokens: state.tokens + rewardTokens,
       architecturePoints: state.architecturePoints + rewardArchitecturePoints,
       milestoneClaims: [...state.milestoneClaims, milestoneId],
       activeNotification: makeNotification(
         `Milestone: ${milestone.title}`,
-        `+${rewardTokens.toLocaleString()} LoC / +${rewardEnergyDrinks} cans / +${rewardArchitecturePoints} AP`
+        `+${formatNumber(rewardLoc)} LoC / +${formatNumber(rewardTokens)} Tokens / +${rewardArchitecturePoints} AP`
       ),
     });
     void persistSnapshot(get());
@@ -1076,11 +1082,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   reboot: () => {
     const state = get();
-    if (state.lifetimeTokens < REBOOT_THRESHOLD) return;
+    if (state.lifetimeLoc < REBOOT_THRESHOLD) return;
 
     const rebootBonusPoints = Math.max(
       1,
-      Math.floor(Math.log10(Math.max(REBOOT_THRESHOLD, state.lifetimeTokens)) - 5)
+      Math.floor(Math.log10(Math.max(REBOOT_THRESHOLD, state.lifetimeLoc)) - 5)
     );
     const preservedMetaState = {
       architecturePoints: state.architecturePoints + rebootBonusPoints,
@@ -1093,11 +1099,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       hasHydrated: true,
       hydrationStarted: false,
       lastTickTime: Date.now(),
-      energyTechLevel: state.energyTechLevel,
+      tokenTechLevel: state.tokenTechLevel,
       rebootPrestigeLevel: state.rebootPrestigeLevel + 1,
-      energyDrinks: Math.floor(state.energyDrinks * 0.5),
+      tokens: Math.floor(state.tokens * 0.5),
       rebootCount: state.rebootCount + 1,
-      lifetimeTokens: state.lifetimeTokens,
+      lifetimeLoc: state.lifetimeLoc,
       ...preservedMetaState,
       activeNotification: makeNotification("Reboot Complete", `+${rebootBonusPoints} Architecture Points`),
     });
@@ -1105,7 +1111,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   clearOfflineToast: () => {
-    set({ offlineEarnedTokens: 0, offlineEarnedSeconds: 0 });
+    set({ offlineEarnedLoc: 0, offlineEarnedSeconds: 0 });
   },
 
   dismissNotification: () => {
@@ -1123,6 +1129,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   setBuyMultiplier: (mult) => {
     set({ buyMultiplier: mult });
+    void persistSnapshot(get());
+  },
+
+  setUseScientificNotation: (enabled: boolean) => {
+    set({ useScientificNotation: enabled });
     void persistSnapshot(get());
   },
 
@@ -1187,7 +1198,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       bonusWordPosition: null,
       activeEvent: null,
       activeNotification: null,
-      offlineEarnedTokens: 0,
+      offlineEarnedLoc: 0,
       offlineEarnedSeconds: 0,
       hasHydrated: true,
       hydrationStarted: false,
@@ -1214,7 +1225,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
 export {
   ACHIEVEMENT_DEFINITIONS,
-  EVENT_DEFINITIONS, getEnergyTechCost, getTierUnlockRequirement, getUpgradeCostMultiplier,
+  EVENT_DEFINITIONS, getTokenTechCost, getTierUnlockRequirement, getUpgradeCostMultiplier,
   META_NODE_DEFINITIONS,
   MILESTONES, REBOOT_THRESHOLD
 };

@@ -89,13 +89,13 @@ describe("getUpgradeUnlockRequirement", () => {
     expect(getUpgradeUnlockRequirement("autoCoder")).toEqual({});
   });
 
-  it("returns lifetime tokens for aiPair", () => {
-    expect(getUpgradeUnlockRequirement("aiPair")).toEqual({ lifetimeTokens: 500 });
+  it("returns lifetime loc for aiPair", () => {
+    expect(getUpgradeUnlockRequirement("aiPair")).toEqual({ lifetimeLoc: 500 });
   });
 
   it("returns both for ciPipeline", () => {
     expect(getUpgradeUnlockRequirement("ciPipeline")).toEqual({
-      lifetimeTokens: 250_000,
+      lifetimeLoc: 250_000,
       rebootCount: 1,
     });
   });

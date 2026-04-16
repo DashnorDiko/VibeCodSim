@@ -40,7 +40,7 @@ import { ProgressToast } from "../components/ui/ProgressToast";
 import { WelcomeBackToast } from "../components/ui/WelcomeBackToast";
 import { BuyMultiplierToggle } from "../components/ui/BuyMultiplierToggle";
 import { T } from "../constants/theme";
-import { ACHIEVEMENT_DEFINITIONS, getEnergyTechCost, useGameStore } from "../store/gameStore";
+import { ACHIEVEMENT_DEFINITIONS, getTokenTechCost, useGameStore } from "../store/gameStore";
 import { formatNumber } from "../utils/formatNumber";
 
 type MobileTab = "NODE" | "PACKAGES" | "ADVANCED" | "BOOST" | "PROGRESS";
@@ -125,7 +125,11 @@ const PackagesContent: React.FC = () => (
   </ScrollView>
 );
 
-const AdvancedContent: React.FC = () => (
+const AdvancedContent: React.FC = () => {
+  const unlockedMetaNodes = useGameStore((s) => s.unlockedMetaNodes);
+  const cloudBurstMult = unlockedMetaNodes.includes("burstDaemon") ? 3 : 2;
+
+  return (
   <ScrollView style={{ flex: 1, paddingTop: T.space.md }}>
     <BuyMultiplierToggle />
     <Text style={{
@@ -137,7 +141,7 @@ const AdvancedContent: React.FC = () => (
     </Text>
     <UpgradeCard type="aiPair" title="AI Pair Programmer" unlocksAt={500} description="-15% strain per level" />
     <UpgradeCard type="gitAutopilot" title="Git Autopilot" unlocksAt={5000} description="+10% passive LoC/sec per level" />
-    <UpgradeCard type="cloudBurst" title="Cloud Burst" unlocksAt={50000} description="Toggle 2x LoC (drains 1% cans/sec)" />
+    <UpgradeCard type="cloudBurst" title="Cloud Burst" unlocksAt={50000} description={`Toggle ${cloudBurstMult}x LoC (drains 1% Tokens/sec)`} />
     <Text style={{
       paddingHorizontal: T.space.lg, color: T.text.muted,
       textTransform: "uppercase", fontSize: T.font.xs, fontWeight: "bold",
@@ -148,17 +152,19 @@ const AdvancedContent: React.FC = () => (
     <UpgradeCard type="ciPipeline" title="CI Pipeline" description="+20% passive layer per level" />
     <UpgradeCard type="observability" title="Observability Matrix" description="+35% global layer per level" />
   </ScrollView>
-);
+  );
+};
 
 const BoostContent: React.FC = () => {
-  const energyDrinks = useGameStore((s) => s.energyDrinks);
-  const techLevel = useGameStore((s) => s.energyTechLevel);
+  const tokens = useGameStore((s) => s.tokens);
+  const techLevel = useGameStore((s) => s.tokenTechLevel);
   const prestigeLevel = useGameStore((s) => s.rebootPrestigeLevel);
   const rebootCount = useGameStore((s) => s.rebootCount);
-  const purchaseEnergyUpgrade = useGameStore((s) => s.purchaseEnergyUpgrade);
-  const cost = getEnergyTechCost(techLevel);
-  const nextCost = getEnergyTechCost(techLevel + 1);
-  const canAfford = energyDrinks >= cost;
+  const purchaseTokenUpgrade = useGameStore((s) => s.purchaseTokenUpgrade);
+  const useScientificNotation = useGameStore((s) => s.useScientificNotation);
+  const cost = getTokenTechCost(techLevel);
+  const nextCost = getTokenTechCost(techLevel + 1);
+  const canAfford = tokens >= cost;
   const isMaxed = techLevel >= 20;
   const shopBonus = (techLevel * 0.2 * (1 / (1 + techLevel * 0.05)) * 100).toFixed(0);
   const rebootBonus = (prestigeLevel * 0.15 * (1 / (1 + prestigeLevel * 0.03)) * 100).toFixed(0);
@@ -184,7 +190,7 @@ const BoostContent: React.FC = () => {
             </View>
           </View>
           <Pressable
-            onPress={purchaseEnergyUpgrade}
+            onPress={purchaseTokenUpgrade}
             disabled={!canAfford || isMaxed}
             style={({ pressed }) => ({
               borderRadius: T.radius.md, paddingHorizontal: T.space.xl, paddingVertical: T.space.md,
@@ -225,7 +231,7 @@ const BoostContent: React.FC = () => {
         <RebootButton />
         <View style={{ alignItems: "center", marginTop: T.space.md }}>
           <Text style={{ color: T.text.disabled, fontSize: T.font.xs, textAlign: "center", fontFamily: T.mono }}>
-            Tap floating energy cans in Simulation to earn cans
+            Tap floating Tokens in Simulation to earn Tokens
           </Text>
         </View>
       </View>
@@ -353,7 +359,7 @@ const StatsPanel: React.FC = () => {
   const highestCombo = useGameStore((s) => s.highestCombo);
   const rebootCount = useGameStore((s) => s.rebootCount);
   const locPerSecond = useGameStore((s) => s.locPerSecond);
-  const lifetimeTokens = useGameStore((s) => s.lifetimeTokens);
+  const lifetimeLoc = useGameStore((s) => s.lifetimeLoc);
   const serverLevel = useGameStore((s) => s.serverLevel);
   const autoCoderLevel = useGameStore((s) => s.autoCoderLevel);
   const keyboardLevel = useGameStore((s) => s.keyboardLevel);
@@ -386,14 +392,14 @@ const StatsPanel: React.FC = () => {
 
       <Text style={{ color: T.text.muted, fontSize: T.font.xs, fontFamily: T.mono, textTransform: "uppercase", letterSpacing: 1, marginBottom: T.space.xs }}>Session</Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: T.space.sm, marginBottom: T.space.md }}>
-        <StatCard label="Total Taps" value={totalTaps.toLocaleString()} accentColor={T.accent.blue} />
+        <StatCard label="Total Taps" value={formatNumber(totalTaps)} accentColor={T.accent.blue} />
         <StatCard label="Time Played" value={`${hours}h ${mins}m`} accentColor={T.accent.blue} />
         <StatCard label="Highest Combo" value={highestCombo.toString()} accentColor={T.accent.blue} />
       </View>
 
       <Text style={{ color: T.text.muted, fontSize: T.font.xs, fontFamily: T.mono, textTransform: "uppercase", letterSpacing: 1, marginBottom: T.space.xs }}>All-Time</Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: T.space.sm, marginBottom: T.space.md }}>
-        <StatCard label="Lifetime LoC" value={formatNumber(lifetimeTokens)} accentColor={T.accent.green} />
+        <StatCard label="Lifetime LoC" value={formatNumber(lifetimeLoc)} accentColor={T.accent.green} />
         <StatCard label="Current LoC/sec" value={formatNumber(locPerSecond)} accentColor={T.accent.green} />
         <StatCard label="Total Reboots" value={rebootCount.toString()} accentColor={T.accent.green} />
         <StatCard label="Sparks" value={totalSparksCollected.toString()} accentColor={T.accent.yellow} />
@@ -470,6 +476,9 @@ const SettingsModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
   const resetSave = useGameStore((s) => s.resetSave);
   const exportSave = useGameStore((s) => s.exportSave);
   const importSave = useGameStore((s) => s.importSave);
+  const useScientificNotation = useGameStore((s) => s.useScientificNotation);
+  const setUseScientificNotation = useGameStore((s) => s.setUseScientificNotation);
+
   const [exportString, setExportString] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
   const [resetInput, setResetInput] = useState("");
@@ -638,6 +647,30 @@ const SettingsModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
 
             <View style={{ height: 1, backgroundColor: T.border.subtle, marginVertical: T.space.md }} />
 
+            <View style={{ marginBottom: T.space.sm }}>
+              <Pressable
+                onPress={() => setUseScientificNotation(!useScientificNotation)}
+                style={({ pressed }) => ({
+                  paddingVertical: T.space.md, paddingHorizontal: T.space.lg,
+                  borderRadius: T.radius.sm, backgroundColor: pressed ? "#1a3a5a" : "#1a2a3a",
+                  borderWidth: 1, borderColor: "#2e405f",
+                  flexDirection: "row", justifyContent: "space-between", alignItems: "center"
+                })}
+              >
+                <Text style={{ color: T.accent.blueAlt, fontFamily: T.mono, fontSize: T.font.sm, fontWeight: "600" }}>
+                  Use Scientific Notation
+                </Text>
+                <Text style={{ color: useScientificNotation ? T.accent.green : T.text.muted, fontFamily: T.mono, fontSize: T.font.sm, fontWeight: "bold" }}>
+                  {useScientificNotation ? "ON" : "OFF"}
+                </Text>
+              </Pressable>
+              <Text style={{ color: T.text.disabled, fontSize: 10, fontFamily: T.mono, marginTop: T.space.xs, textAlign: "center" }}>
+                Forces numbers over 100 to display as 1.00e+2
+              </Text>
+            </View>
+
+            <View style={{ height: 1, backgroundColor: T.border.subtle, marginVertical: T.space.md }} />
+
             {showResetConfirm ? (
               <View style={{ marginBottom: T.space.sm }}>
                 <Text style={{ color: T.accent.red, fontSize: T.font.sm, fontFamily: T.mono, marginBottom: T.space.xs, textAlign: "center" }}>
@@ -695,7 +728,7 @@ const SettingsModal: React.FC<{ visible: boolean; onClose: () => void }> = ({ vi
 };
 
 const ProgressContent: React.FC = () => {
-  const lifetimeTokens = useGameStore((s) => s.lifetimeTokens);
+  const lifetimeLoc = useGameStore((s) => s.lifetimeLoc);
   const architecturePoints = useGameStore((s) => s.architecturePoints);
 
   return (
@@ -709,7 +742,7 @@ const ProgressContent: React.FC = () => {
           Progression Snapshot
         </Text>
         <Text style={{ color: T.text.primary, fontSize: T.font.base, marginTop: T.space.xs, fontFamily: T.mono }}>
-          Total LoC: {formatNumber(lifetimeTokens)}
+          Total LoC: {formatNumber(lifetimeLoc)}
         </Text>
         <Text style={{ color: T.text.primary, fontSize: T.font.base, marginTop: 2, fontFamily: T.mono }}>
           Architecture Points: {architecturePoints}
@@ -774,7 +807,7 @@ const GameScreen: React.FC = () => {
   const hasHydrated = useGameStore((s) => s.hasHydrated);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const insets = useSafeAreaInsets();
-  const offlineEarnedTokens = useGameStore((s) => s.offlineEarnedTokens);
+  const offlineEarnedLoc = useGameStore((s) => s.offlineEarnedLoc);
   const offlineEarnedSeconds = useGameStore((s) => s.offlineEarnedSeconds);
   const clearOfflineToast = useGameStore((s) => s.clearOfflineToast);
 
@@ -840,7 +873,7 @@ const GameScreen: React.FC = () => {
           <View style={{ flex: 1 }}>{renderDesktopSubTab()}</View>
         </View>
 
-        {offlineEarnedTokens > 0 && <WelcomeBackToast earned={offlineEarnedTokens} offlineSeconds={offlineEarnedSeconds} onDismiss={clearOfflineToast} />}
+        {offlineEarnedLoc > 0 && <WelcomeBackToast earned={offlineEarnedLoc} offlineSeconds={offlineEarnedSeconds} onDismiss={clearOfflineToast} />}
         <ProgressToast />
         <SettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
       </View>
@@ -916,7 +949,7 @@ const GameScreen: React.FC = () => {
         })}
       </View>
 
-      {offlineEarnedTokens > 0 && <WelcomeBackToast earned={offlineEarnedTokens} offlineSeconds={offlineEarnedSeconds} onDismiss={clearOfflineToast} />}
+      {offlineEarnedLoc > 0 && <WelcomeBackToast earned={offlineEarnedLoc} offlineSeconds={offlineEarnedSeconds} onDismiss={clearOfflineToast} />}
       <ProgressToast />
       <SettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </View>

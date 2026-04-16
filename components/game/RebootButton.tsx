@@ -6,7 +6,7 @@ import { formatNumber } from "../../utils/formatNumber";
 const HOLD_DURATION = 2000; // 2 seconds hold-to-confirm
 
 export const RebootButton: React.FC = () => {
-  const lifetimeTokens = useGameStore((s) => s.lifetimeTokens);
+  const lifetimeLoc = useGameStore((s) => s.lifetimeLoc);
   const rebootCount = useGameStore((s) => s.rebootCount);
   const reboot = useGameStore((s) => s.reboot);
 
@@ -14,7 +14,7 @@ export const RebootButton: React.FC = () => {
   const progress = useRef(new Animated.Value(0)).current;
   const holdAnimation = useRef<Animated.CompositeAnimation | null>(null);
 
-  const canReboot = lifetimeTokens >= REBOOT_THRESHOLD;
+  const canReboot = lifetimeLoc >= REBOOT_THRESHOLD;
 
   if (!canReboot) return null;
 
